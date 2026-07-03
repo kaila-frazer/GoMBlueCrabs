@@ -1,0 +1,802 @@
+---
+title: "Covariate_Construction"
+author: "Kai Frazer"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## To do for GRS
+
+-   Run best Poisson with multi- covariates and Gibbs variable selection
+
+    -   Plot response curves to best covariates
+
+-   Run through N-mixture again
+
+    -   Plot estimated true crabs
+
+```{r}
+#| label: libraries [RUN]
+#| warning: false
+
+library(pacman)
+p_load(ncdf4, terra, dplyr, vroom, lubridate, ggplot2, terra, sp, rnaturalearth, tidyterra, heatwaveR, rerddap, naniar, forcats, tidync, glue, tidyr, viridisLite, viridis, R2jags, zoo)
+```
+
+```{r}
+#| label: create a list to save matrices for JAGS [RUN]
+
+matrices <- list()
+```
+
+## OISST
+
+```{r}
+#| label: oisst download [RUN]
+#| warning: false
+
+# system.time(
+#   # 66sec for two months of all responses;
+#   # 2sec for two months of just sst;
+#   # 461sec for 6 years (7.5min)
+# OISST_data7 <- griddap(
+#     datasetx = "ncdc_oisst_v2_avhrr_by_time_zlev_lat_lon", # ncdcOisst21Agg_LonPM180
+#     url = "https://www.ncei.noaa.gov/erddap/", # https://coastwatch.pfeg.noaa.gov/erddap/
+#     longitude = c(288, 298), # -72,-62
+#     latitude = c(41,45),
+#     # time = c("1982-01-01", "1989-01-01"),
+#     # time = c("1989-01-02", "1995-01-01"),
+#     # time = c("1995-01-02", "2001-01-01"),
+#     # time = c("2001-01-02","2008-01-01"),
+#     # time = c("2008-01-02","2015-01-01"),
+#     # time = c("2015-01-02","2022-01-01"),
+#     # time = c("2022-01-02", "2026-01-01"),
+#     fields = c("sst")
+#   ) ) # pfeg server was down when i tried to get data7 so i used the ncei server, which also has oisst (ooooh erddap)
+# saveRDS(OISST_data1, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_1989.rds')
+# saveRDS(OISST_data2, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1989_1995.rds')
+# saveRDS(OISST_data3, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1995_2001.rds')
+# saveRDS(OISST_data4, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2001_2008.rds')
+# saveRDS(OISST_data5, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2008_2015.rds')
+# saveRDS(OISST_data6, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2015_2022.rds')
+# saveRDS(OISST_data7, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2022_2026.rds')
+# 
+# OISST_data1 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_1989.rds')
+# OISST_data2 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1989_1995.rds')
+# OISST_data3 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1995_2001.rds')
+# OISST_data4 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2001_2008.rds')
+# OISST_data5 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2008_2015.rds')
+# OISST_data6 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2015_2022.rds')
+# OISST_data7 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2022_2026.rds')
+# 
+# oisst <- full_join(OISST_data1[["data"]], OISST_data2[["data"]]) %>%
+#   full_join(OISST_data3[["data"]]) %>%
+#   full_join(OISST_data4[["data"]]) %>%
+#   full_join(OISST_data5[["data"]]) %>%
+#   full_join(OISST_data6[["data"]]) %>%
+#   full_join(OISST_data7[["data"]])
+# saveRDS(oisst, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_2026.rds')
+
+oisst_daily <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_2026.rds') %>% 
+  mutate(date_time = ymd_hms(time), date = date(date_time), 
+         year = year(date), month = month(date), 
+         yearmon = as.yearmon(date),
+         season = factor(case_when(month %in% c(12,1,2) ~ "Winter",
+                            month %in% c(3,4,5) ~ "Spring",
+                            month %in% c(6,7,8) ~ "Summer",
+                            month %in% c(9,10,11) ~ "Fall"))) %>%
+  select(longitude, latitude, date_time, date, year, yearmon, month, season, sst) %>%
+  mutate(longitude = case_when(as.numeric(longitude) < 0 ~ longitude,
+                               as.numeric(longitude) > 0 ~ as.numeric(longitude) - 360))
+
+oisst_monthly <- oisst_daily %>%
+  group_by(longitude, latitude, yearmon, year, season, month) %>%
+  summarize(monthly_sst = mean(sst), monthly_min = min(sst), monthly_max = max(sst)) %>%
+  mutate(longitude = case_when(as.numeric(longitude) < 0 ~ longitude,
+                               as.numeric(longitude) > 0 ~ as.numeric(longitude) - 360))
+
+#take a look at where the nas are
+# ggplot(oisst, aes(x = date, y = sst)) +
+#   geom_miss_point() +
+#   scale_color_viridis_d("Missing\nOISST (°C)\nvalues") +
+#   labs(y="Optimum Interpolated Sea Surface Temperature (OISST) (°C)", x="Date") +
+#   theme_minimal() # looks like nas are evenly distributed/without a seasonal pattern and we can work without them
+
+oisst_monthly_nona <- na.omit(oisst_monthly) # this downsizes from 221 pixels to 100 with values
+oisst_daily_nona <- na.omit(oisst_daily)
+```
+
+```{r}
+#| label: establish grid from oisst [RUN]
+#| warnings: false
+
+# claude code helped me think through setting times for these spatrasters
+oisst_split <- oisst_monthly_nona %>%
+  split(., .$yearmon) # split into a list of dfs by yearmon
+
+# mean temps
+oisstmean_r <- lapply(names(oisst_split), \(i) { # iterate through list of yearmon dfs
+    df <- oisst_split[[i]] %>% ungroup() %>% select(longitude, latitude, monthly_sst)
+    r <- rast(df) # rasterize
+    names(r) <- i  # name the layer after the yearmon
+    terra::time(r) <- as.Date(paste0(oisst_split[[i]]$year[1],"-",oisst_split[[i]]$month[1],"-01")) # set time
+    r # output the rast
+  }) %>%
+  rast()
+
+# build a 0/1 oisst raster
+oisst_grid <- oisstmean_r # create a new object
+values(oisst_grid) <- 0.0001 # set all vals to near zero. we don't want exactly zero because then we can't get proportional abundance (crab/people) for offshore areas
+oisst_grid <- mask(oisst_grid, oisstmean_r) # set land to na
+```
+
+## Bathymetry
+
+```{r}
+#| label: bathymetry [RUN]
+#| warning: false
+
+bath <- nc_open("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/gebco_2026_n45.0_s41.0_w-72.0_e-62.0.nc") # from https://download.gebco.net/ # only edit from 913 project - this now extends further east
+lat <- ncvar_get(bath, "lat"); lon <- ncvar_get(bath, "lon")
+bath_var <- ncvar_get(bath, "elevation") %>%
+ rast() %>% t() %>% flip() %>%
+  app(fun=function(x){ x[x > 0] <- NA; x[x < -47] <- NA; return(x)}) # resolution is 0.004 degree cells
+# chose to crop to shallower than -47m because the deepest blue crab point was at -46 - see figure out relevant depth code chunk in the response section below
+ext(bath_var) <- c(xmin=min(lon), xmax=max(lon), ymin=min(lat), ymax=max(lat))
+#plot(bath_var)
+
+# set up land outline for plotting
+land_outline <- ncvar_get(bath, "elevation") %>%
+  rast() %>% t() %>% flip() %>%
+  app(fun=function(x){x[x<=0] <- NA; return(x)}) %>% # outline!
+  app(fun=function(x){x[is.na(x)==F] <- 1; return(x)})
+ext(land_outline) <- c(xmin=min(lon), xmax=max(lon), ymin=min(lat), ymax=max(lat))
+crs(land_outline) <- "EPSG:4326"
+land_outline <- as.polygons(land_outline)
+```
+
+```{r}
+#| label: resample bathymetry and create a new depth-clipped mask [RUN]
+
+# resample to oisst grid
+bath_rast <- resample(bath_var, oisst_grid, method="mean") %>% mask(oisst_grid[[1]])
+
+# establish a mask from the shore-clipped new bath rast
+grid <- bath_rast # create a new object
+values(grid) <- 0.0001 # set all vals to near zero. we don't want exactly zero because then we can't get proportional abundance (crab/people) for offshore areas
+grid <- mask(grid, bath_rast) # set land to na
+
+grid_poly <- as.polygons(grid) # to outline the study area in later plots
+crs(grid_poly) <- "WGS84"
+```
+
+```{r}
+#| label: add to list of matrices [RUN]
+
+# bathymetry matrix
+bath <- as.data.frame(bath_rast, xy=T, wide=F) %>%
+  rename("longitude" = "x", "latitude" = "y", "depth" = "values") %>% dplyr::select(-layer)
+
+points <- bath[,1:2]
+
+matrices <- append(matrices, list("points"=points, "depth"=bath[,3]))
+```
+
+## OISST covariates
+
+```{r}
+#| label: clip to domain
+
+oisst_monthly_nona <- semi_join(oisst_monthly_nona, points, by = c("longitude", "latitude"))
+oisst_daily_nona <- semi_join(oisst_daily_nona, points, by = c("longitude", "latitude"))
+```
+
+```{r}
+#| label: derive seasonal mean, min, max, and coldflag temp covariates [RUN]
+
+season_shift_monthly <- oisst_monthly_nona %>%
+  mutate(year = if_else(month >= 9, year + 1, year)) # start the next year in september
+
+# create a new dataframe with yearly covariate values
+seasonal_covariates <- season_shift_monthly %>% 
+  group_by(latitude, longitude, year, season) %>% 
+  summarise(seasonal_mean = mean(monthly_sst), seasonal_min = min(monthly_min),
+            seasonal_max = max(monthly_max)) %>%
+  mutate(season = fct_relevel(season, levels(season)[c(4,2,3,1)])) %>% arrange(season)
+```
+
+```{r}
+#| label: derive degree day and cold flag covariates [RUN]
+
+# DDD (degree death days) is defined by the sum of the difference between 3C and the mean daily temperature for the winter at cell i and year y
+# RDD (reproductive degree days) defined as the mean daily temperature minus 12C calculated from January 1 to end of May; I changed the timeline from Alex's definition because there were no RDDs before April 30
+# SDD (spawning degree days) is defined as the mean daily temperature minus 19C Calculated on the same timeline as RDD
+# coldflag is just a value of 1 flagging SSTs below 3C (not a degree day value)
+
+season_shift_daily <- oisst_daily_nona %>%
+  mutate(year = if_else(month >= 9, year + 1, year)) # clock starts over in the fall
+
+dd_covariates <- season_shift_daily %>% 
+  mutate(ddd = case_when(sst > 3 ~ 0,
+                         sst <= 3 ~ case_when(sst >= 0 ~ 3 - sst,
+                                             sst < 0 ~ 3 + abs(sst))),
+         rdd = case_when(month > 5 ~ 0,
+                         month <= 5 ~ case_when(sst < 12 ~ 0,
+                                                sst >= 12 ~ sst - 12)),
+         sdd = case_when(month > 5 ~ 0,
+                         month <= 5 ~ case_when(sst < 19 ~ 0,
+                                                sst >= 19 ~ sst - 19)),
+         coldflag = case_when(sst > 3 ~ 0, sst <= 3 ~ 1)
+         ) %>%
+  group_by(latitude, longitude, year, season) %>% 
+  summarize(ddd = sum(ddd), rdd = sum(rdd), sdd = sum(sdd), coldflag = sum(coldflag))
+```
+
+```{r}
+#| label: transform covariates into matrices for JAGS [RUN]
+
+# goal here is to transform long dataframes into wide matrices for jags, one for each covariate. generally, code will be quite redundant, sorry kids
+
+# winter covariates
+winter_mean <- seasonal_covariates %>% filter(season == "Winter") %>%
+  group_by(longitude, latitude, year) %>% summarize(winter_mean = mean(seasonal_mean)) %>%
+  pivot_wider(names_from = year, values_from = winter_mean)
+winter_mean <- left_join(points, winter_mean)
+winter_mean <- winter_mean[,3:46]
+winter_min <- seasonal_covariates %>% filter(season == "Winter") %>%
+  group_by(longitude, latitude, year) %>% summarize(winter_min = min(seasonal_min)) %>%
+  pivot_wider(names_from = year, values_from = winter_min)
+winter_min <- left_join(points, winter_min)
+winter_min <- winter_min[,3:46]
+# summer covariates
+summer_mean <- seasonal_covariates %>% filter(season == "Summer") %>%
+  group_by(longitude, latitude, year) %>% summarize(summer_mean = mean(seasonal_mean)) %>%
+  pivot_wider(names_from = year, values_from = summer_mean)
+summer_mean <- left_join(points, summer_mean)
+summer_mean <- summer_mean[,3:46]
+summer_max <- seasonal_covariates %>% filter(season == "Summer") %>%
+  group_by(longitude, latitude, year) %>% summarize(summer_max = max(seasonal_max)) %>%
+  pivot_wider(names_from = year, values_from = summer_max)
+summer_max <- left_join(points, summer_max)
+summer_max <- summer_max[,3:46]
+# flag covariates
+fall_flags <- dd_covariates %>% filter(season == "Fall") %>%
+  group_by(longitude, latitude, year) %>% summarize(fall_flags = sum(coldflag)) %>%
+  pivot_wider(names_from = year, values_from = fall_flags)
+fall_flags <- left_join(points, fall_flags)
+fall_flags <- fall_flags[,3:46]
+winter_flags <- dd_covariates %>% filter(season == "Winter") %>%
+  group_by(longitude, latitude, year) %>% summarize(winter_flags = sum(coldflag)) %>%
+  pivot_wider(names_from = year, values_from = winter_flags)
+winter_flags <- left_join(points, winter_flags)
+winter_flags <- winter_flags[,3:46]
+spring_flags <- dd_covariates %>% filter(season == "Spring") %>%
+  group_by(longitude, latitude, year) %>% summarize(spring_flags = sum(coldflag)) %>%
+  pivot_wider(names_from = year, values_from = spring_flags)
+spring_flags <- left_join(points, spring_flags)
+spring_flags <- spring_flags[,3:46]
+yearly_flags <- dd_covariates %>%
+  group_by(longitude, latitude, year) %>% summarize(yearly_flags = sum(coldflag)) %>%
+  pivot_wider(names_from = year, values_from = yearly_flags)
+yearly_flags <- left_join(points, yearly_flags)
+yearly_flags <- yearly_flags[,3:46]
+# degree day covariates
+ddd <- dd_covariates %>% group_by(longitude, latitude, year) %>%
+  summarize(ddd = sum(ddd)) %>% pivot_wider(names_from = year, values_from = ddd)
+ddd <- left_join(points, ddd)
+ddd <- ddd[,3:46]
+rdd <- dd_covariates %>% group_by(longitude, latitude, year) %>%
+  summarize(rdd = sum(rdd)) %>% pivot_wider(names_from = year, values_from = rdd)
+rdd <- left_join(points, rdd)
+rdd <- rdd[,3:46]
+sdd <- dd_covariates %>% group_by(longitude, latitude, year) %>%
+  summarize(sdd = sum(sdd)) %>% pivot_wider(names_from = year, values_from = sdd)
+sdd <- left_join(points, sdd)
+sdd <- sdd[,3:46]
+```
+
+```{r}
+#| label: add to list of matrices [RUN]
+
+matrices <- append(matrices, list("winter_mean"=winter_mean, "winter_min"=winter_min, "summer_mean"=summer_mean, "summer_max"=summer_max, "fall_flags"=fall_flags, "winter_flags"=winter_flags, "spring_flags"=spring_flags, "yearly_flags"=yearly_flags, "ddd"=ddd, "rdd"=rdd, "sdd"=sdd))
+```
+
+## Human population
+
+```{r}
+#| label: load and resample
+
+# citation: Center For International Earth Science Information Network-CIESIN-Columbia University. (2017). <i>Gridded Population of the World, Version 4 (GPWv4): Population Density, Revision 11</i> (Version 4.11) [Data set]. Palisades, NY: NASA Socioeconomic Data and Applications Center (SEDAC). https://doi.org/10.7927/H49C6VHW Date Accessed: 2026-03-23
+
+# process to acquire - https://www.earthdata.nasa.gov/data/catalog/sedac-ciesin-sedac-gpwv4-popdens-r11-4.11 -> data access ->
+
+pop <- rast('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Data/EarthData_Population/gpw_v4_population_density_rev11_2020_30_sec.tif') %>% crop(ext(-72,-62,41,45))
+# ggplot() + geom_spatraster(data=pop,native.crs=T) +
+#   coord_sf(xlim=c(-72, -69), ylim=c(41, 45), expand=T) + 
+#   scale_fill_viridis_c("Population", na.value="white") +
+#   theme_classic() # not high resolution enough
+
+# resample pop raster
+pop_rast <- resample(pop, grid, method="sum") %>% # resample
+  mask(mask=grid) %>% # set land as na
+  merge(grid) # set ocean as 0
+pop_rast <- pop_rast + 0.0001 # pseudo 0 for division later
+```
+
+```{r}
+#| label: add to list of matrices [RUN]
+
+pop <- as.data.frame(pop_rast, xy=T, wide=F) %>%
+  rename("longitude" = "x", "latitude" = "y", "pop" = "values") %>% dplyr::select(-layer)
+
+matrices <- append(matrices, list("pop"=pop[,3]))
+```
+
+## Response
+
+```{r}
+#| label: build spatial crab[i,y] [UNNECESSARY TO RUN]
+#| warning: false
+
+# see Manomet_Exploration.qmd for data cleaning
+crab.vect <- vect("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/manomet_and_gbif_clean.shp") %>% project("WGS84") # projecting into a familiar lat/lon format for easier processing in the dataframe. WGS84 will be less accurate to distances in the region than the projection we used in QGIS, but now that we've calculated populations within 5km of the crabs, we're done with the most distance-intensive part of the analysis.
+
+# rasterize - had some help from claude on the lapply
+dates <- sort(unique(year(crab.vect$date)))  # create a vector of dates
+crab.rast <- lapply(dates, \(d) { # loop through dates to make rasters
+    sub <- crab.vect[year(crab.vect$date) == d, ] # select data of interest
+    r <- rasterize(x=sub, y=grid, fun=sum, background=0) # rasterize the given date
+    names(r) <- as.character(d) # set the name of that raster
+    r # return the raster
+  }) %>%
+  rast() %>% # stack 'em
+  mask(mask=grid)
+
+# fill in layers for years without data
+years <- seq(from=as.integer(min(year(crab.vect$date))), to=as.integer(max(year(crab.vect$date))))
+crab.blank.years <- mask(x=crab.rast[[1]], # create the blank rasterlayer
+                         mask=grid) %>%
+  rep(length(years)) # create a full dataset of all blanks
+names(crab.blank.years) <- years # set names for blank dataset
+crab.withzeros <- list(base::rep(0,length(years))) # make a blank list to fill
+for(i in 1:length(years)){
+  if(as.character(years[i]) %in% names(crab.rast) == T){ # if that year is in our crab raster already...
+    crab.withzeros[i] <- crab.rast[[which(names(crab.rast)==years[i])]]} # fill it with the crab values!
+  else { # if that year isn't in the crab raster...
+    crab.withzeros[i] <- crab.blank.years[[which(names(crab.blank.years)==years[i])]]} # fill it with a blank raster
+}
+crab.withzeros <- rast(crab.withzeros) # rasterize the list we filled with raster
+
+saveRDS(crab.withzeros, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/manometandgbif_coarse_coastal_20260630.rds')
+```
+
+```{r}
+#| label: make a monthly version crab[i,m,y]
+
+# rasterize - had some help from claude on the lapply
+mon.dates <- sort(unique(as.yearmon(crab.vect$date)))  # create a vector of dates
+crab.rast.mon <- lapply(mon.dates, \(d) { # loop through dates to make rasters
+    sub <- crab.vect[as.yearmon(crab.vect$date) == d, ] # select data of interest
+    r <- rasterize(x=sub, y=grid, fun=sum, background=0) # rasterize the given date
+    names(r) <- as.character(d) # set the name of that raster
+    r # return the raster
+  }) %>%
+  rast() %>% # stack 'em
+  mask(mask=grid)
+
+# fill in layers for years without data
+yearmons <- seq(from=(min(as.yearmon(crab.vect$date))), 
+                to=(max(as.yearmon(crab.vect$date))), by=1/12)
+crab.blank.yearmons <- mask(x=crab.rast.mon[[1]], # create the blank rasterlayer
+                         mask=grid) %>%
+  rep(length(yearmons)) # create a full dataset of all blanks
+names(crab.blank.yearmons) <- yearmons # set names for blank dataset
+crab.withzeros.mon <- list(base::rep(0,length(yearmons))) # make a blank list to fill
+for(i in 1:length(yearmons)){
+  if(as.character(yearmons[i]) %in% names(crab.rast.mon) == T){ # if that year is in our crab raster already...
+    crab.withzeros.mon[i] <- crab.rast.mon[[which(names(crab.rast.mon)==yearmons[i])]]} # fill it with the crab values!
+  else { # if that year isn't in the crab raster...
+    crab.withzeros.mon[i] <- crab.blank.yearmons[[which(names(crab.blank.yearmons)==yearmons[i])]]} # fill it with a blank raster
+}
+crab.withzeros.mon <- rast(crab.withzeros.mon) # rasterize the list we filled with raster
+
+saveRDS(crab.withzeros.mon, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/manometandgbif_coarse_coastal_20260630_monthly.rds')
+
+```
+
+```{r}
+#| label: figure out relevant depth [UNNECESSARY TO RUN]
+
+# # make it a matrix
+# crab_withzeros <- as.data.frame(crab.withzeros, xy=T, wide=F) %>%
+#   rename("longitude" = "x", "latitude" = "y", "year" = "layer", "pabun" = "values") %>%
+#   mutate(year = as.integer(year)) # takes one minute - if i want non-proportional abundance down the line, i would run crab.rast through the fill-in process and then transform that into a dataframe
+# # get the depth matrix
+# depth_matrix <- as.data.frame(bath_var, xy=T, wide=F) %>%
+#   rename("longitude" = "x", "latitude" = "y", "depth" = "values") %>% select(-layer)
+# # merge
+# crab_depths <- left_join(crab_withzeros, depth_matrix) %>% filter(pabun > 0)
+# table(crab_depths$depth) # really? 145m deep?? 77m deep?? i'm gonna check that point
+# which(crab_depths$depth == -145) # it's 174
+# which(crab_depths$depth == -77) # that one is 176
+# which(crab_depths$depth == -46) # 236
+# which(crab_depths$depth == -36) # 104 and 339
+# 
+# View(as.data.frame(crab.popvect[174])) # has coord.unce of 127m
+# View(as.data.frame(crab.popvect[176])) # has coord.unce of 27754m
+# View(as.data.frame(crab.popvect[236])) # coord.unce of NaN
+# View(as.data.frame(crab.popvect[104])) # coord.unce of 15
+# View(as.data.frame(crab.popvect[339])) # coord.unce of 15
+# 
+# # create a mask for depths shallower than -47m
+# bath_var <- bath_var %>%
+#   app(fun=function(x){ x[x < -47] <- NA; return(x)}) # resolution is 0.004 degree cells
+# ext(bath_var) <- c(xmin=min(lon), xmax=max(lon), ymin=min(lat), ymax=max(lat))
+# plot(bath_var)
+# 
+# ## establish a grid from bathymetry (needed for masking later)
+# # build a 0/1 oisst raster
+# bath_grid <- bath_var # create a new object
+# values(bath_grid) <- 0.0001 # set all vals to near zero. we don't want exactly zero because then we can't get proportional abundance (crab/people) for offshore areas
+# bath_grid <- mask(bath_grid, bath_var) # set land to na
+# 
+# # mask things again
+# propcrab.rast <- mask(x=propcrab.rast, mask=bath_grid) # set land to NA
+
+```
+
+```{r}
+#| label: transform to wide matrix [UNNECESSARY TO RUN]
+
+crab.withzeros <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/manometandgbif_coarse_coastal_20260630.rds')
+
+# make it a matrix
+crab_withzeros <- as.data.frame(crab.withzeros, xy=T, wide=F) %>%
+  rename("longitude" = "x", "latitude" = "y", "year" = "layer", "abun" = "values") %>%
+  mutate(year = as.integer(year)) # takes one minute
+crab_withzeros_wide <- pivot_wider(crab_withzeros, names_from = year,
+                               values_from=abun) # takes about one minute
+crab_withzeros_wide <- crab_withzeros_wide[,15:58] # grab 1982-2025, same years as oisst covars
+
+saveRDS(crab_withzeros_wide, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/ModelReady!!/crab[i,y].rds')
+
+```
+
+```{r}
+#| label: matrix of seasonal data
+
+# a lot of this from Claude
+
+crab.withzeros.mon <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/manometandgbif_coarse_coastal_20260630_monthly.rds')
+
+# raster to data frame
+crab_withzeros_mon <- as.data.frame(crab.withzeros.mon, xy=T, wide=F) %>%
+  rename("longitude" = "x", "latitude" = "y", "yearmon" = "layer", "abun" = "values") %>%
+  separate(yearmon, c("mon", "year"))
+
+# Unique dimension values
+lonlat <- unique(crab_withzeros_mon[, c("longitude", "latitude")])
+years  <- sort(unique(crab_withzeros_mon$year))
+mons   <- sort(unique(crab_withzeros_mon$mon))
+
+# Index each row into its position along each dimension
+lonlat_id <- match(
+  paste(crab_withzeros_mon$longitude, crab_withzeros_mon$latitude),
+  paste(lonlat$longitude, lonlat$latitude)
+)
+year_id <- match(crab_withzeros_mon$year, years)
+mon_id  <- match(crab_withzeros_mon$mon, mons)
+
+# Build empty array and fill it
+crab_arr <- array(
+  NA_real_,
+  dim = c(nrow(lonlat), length(years), length(mons)),
+  dimnames = list(
+    paste(lonlat$longitude, lonlat$latitude, sep = "_"),
+    years,
+    mons
+  )
+)
+
+crab_arr[cbind(lonlat_id, year_id, mon_id)] <- crab_withzeros_mon$abun
+
+saveRDS(crab_arr,'/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/ModelReady!!/crab[i,m,y].rds')
+```
+
+```{r}
+#| label: add to list of matrices [RUN]
+
+matrices <- append(matrices, list("crab_abun"=readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/ModelReady!!/crab[i,y].rds'), "monthly_crab_abun"=readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/ModelReady!!/crab[i,m,y].rds')))
+```
+
+## Save work
+
+```{r}
+#| label: save matrices
+
+saveRDS(matrices, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/ModelReady!!/modelready_matrices.rds')
+```
+
+## Figures for Gordon Research Seminar
+
+```{r}
+#| label: plots for already rasterized covariates (crabs, population, depth)
+
+# blue crabs observed in 2024
+crab <- ggplot() + 
+  geom_spatraster(data = crab.withzeros[["2023"]]) +
+  geom_spatvector(data = land_outline, aes(color = "Coastline"), 
+                  fill = "lightgray", alpha = 0.4, lwd = 0.1) +
+  geom_spatvector(data = grid_poly, aes(color = "Study area\n> -46m"), fill = NA, lwd = 0.3, linetype = 5) + 
+  scale_fill_viridis_c("A. Blue crabs", limits = c(1, 30), breaks = seq(0, 30, 5), option = "D", 
+                       direction = -1, na.value = "white") +
+  scale_color_viridis_d("Outlines", option = "H") +
+  labs(x = "Latitude", y = "Longitude", title = "A. Blue crab observations in 2023") +
+  coord_sf() +
+  theme_classic()
+
+# depth
+depth <- ggplot() + 
+  geom_spatraster(data = bath_rast) +
+  geom_spatvector(data = land_outline, aes(color = "Coastline"), 
+                  fill = "lightgray", alpha = 0.4, lwd = 0.1) +
+  geom_spatvector(data = grid_poly, aes(color = "Study area\n> -46m"), fill = NA, lwd = 0.3, linetype = 5) + 
+  scale_fill_viridis_c("B. Depth (m)", option = "G",
+                       na.value = "white") +
+  scale_color_viridis_d("Outlines", option = "H") +
+  labs(x = "Latitude", y = "Longitude", title = "B. Depth") +
+  coord_sf() +
+  theme_classic()
+
+# human population
+pop <- ggplot() + 
+  geom_spatraster(data = pop_rast) +
+  geom_spatvector(data = land_outline, aes(color = "Coastline"), 
+                  fill = "lightgray", alpha = 0.4, lwd = 0.1) +
+  geom_spatvector(data = grid_poly, aes(color = "Study area\n> -46m"), fill = NA, lwd = 0.3, linetype = 5) + 
+  scale_fill_viridis_c("D. Human\npopulation", option = "F",
+                       limits = c(1, 490000), # so that 0 values don't get a color but the scale isn't so huge that numbers get delineated with scientific notation in the legend
+                       direction = -1,
+                       na.value = "white") +
+  scale_color_viridis_d("Outlines", option = "H") +
+  labs(x = "Latitude", y = "Longitude", title = "D. Human population") +
+  coord_sf() +
+  theme_classic()
+```
+
+```{r}
+#| label: plots for oisst covariates
+
+oisst_plot <- function(varname, plot_title, legend_title, viridis_option, grid, matrices, land_outline, grid_poly) { # for 2023. the only input that changes from the value written here is varname, legend_title, viridis_option, and plot_title
+  rast <- grid
+  cells <- cellFromXY(grid, as.matrix(matrices[["points"]]))
+  values(rast) <- NA
+  rast[cells] <- matrices[[varname]]$`2023`
+  plot <- ggplot() + 
+    geom_spatraster(data = rast) +
+    geom_spatvector(data = land_outline, aes(color = "Coastline"), 
+                  fill = "lightgray", alpha = 0.4, lwd = 0.1) +
+    geom_spatvector(data = grid_poly, aes(color = "Study area\n> -46m"), 
+                    fill = NA, lwd = 0.3, linetype = 5) + 
+    scale_fill_viridis_c(legend_title, option = viridis_option,
+                       na.value = "white") +
+    scale_color_viridis_d("Outlines", option = "H") +
+    labs(x = "Latitude", y = "Longitude", title = plot_title) +
+    coord_sf() +
+    theme_classic()
+    return(plot)
+}
+
+wint <- oisst_plot("winter_mean", "C. Mean winter temperatures for 2023", "C. Sea surface\ntemperature (°C)", "D", grid, matrices, land_outline, grid_poly)
+```
+
+```{r}
+#| label: put the plots together
+
+covars <- (crab + depth) / (wint + pop)
+
+ggsave(plot=covars, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Figs/GRS/Covariates.png", width = 10, height = 8)
+```
+
+## Figures for NHSG
+
+```{r}
+#| label: higher resolution winter min [UNNECESSARY TO RUN]
+
+ggplot() + 
+     geom_spatraster(data = oisstmin_r[["Feb 2024"]]) +
+    geom_spatvector(data = land_outline, alpha=0.5) + 
+    scale_fill_viridis_c("Temp (°C)", na.value="white", option="D") +
+    coord_sf() + # to scale the map
+      theme(axis.text.x=element_text(angle=25)) +
+     labs(x = "Latitude", y = "Longitude", title = "Minimum winter\ntemperature in Feb 2024") +
+     theme_bw() # new data
+```
+
+```{r}
+#| label: higher resolution bathymetry [UNNECESSARY TO RUN]
+
+ggplot() + 
+     geom_spatraster(data = bath_var) +
+    geom_spatvector(data = land_outline, alpha=0.5) + 
+    scale_fill_viridis_c("Depth (m)", na.value="white", option="G", limits=c(-300,0)) +
+    coord_sf() + # to scale the map
+     labs(x = "Latitude", y = "Longitude", title = "Depth") +
+    theme(axis.text.x=element_text(angle=25)) +
+     theme_bw() # new data
+
+```
+
+## Old code \[UNNECESSARY TO RUN\]
+
+```{r}
+#| label: landsat download - needed?
+
+# Acquired Java script from Gemini for Google Earth Engine task: https://gemini.google.com/share/762379e4a924 (AI chat link). Here's the Earth Engine Project: https://code.earthengine.google.com/?scriptPath=Examples:Datasets/LANDSAT/LANDSAT_LC08_C02_T2_L2
+# 
+# Set GoM region to -68 to -72 and 41 to 45
+# 
+# Set CRS to WGS84 to start. I suspect I may need to play with CRSs more later.
+# 
+# Started download around 845AM - forgot to note but i think it took ~45min
+
+lst <- rast("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/Gulf_of_Maine_Monthly_LST_5km_1982_2026.tif") # hmm, turns out it looks really patchy :/
+```
+
+```{r}
+#| label: oisst covariates - old from 913 project - needed?
+#| warning: false
+
+# Wint[i,y] is the mean temperature (C) for the winter season at 0.25 degree cell i and year y
+# Summ[i,y] is equivilent for summer
+
+# group december temperatures with the following year
+december_shift <- oisst_nona
+for(i in 1:nrow(december_shift)){
+  if(december_shift$month[i] == 12){
+    december_shift$year[i] = december_shift$year[i] + 1
+  }
+}
+seasonal_mean <- december_shift %>% 
+  group_by(latitude, longitude, year, season) %>% summarise(seasonal_mean = mean(sst),
+                                                            seasonal_min = min(sst)) %>%
+  mutate(season = fct_relevel(season, levels(season)[c(4,2,3,1)])) %>% arrange(season)
+# covariates
+wint <- seasonal_mean %>% filter(season == "Winter") %>% 
+  rename("winter_mean" = "seasonal_mean", "winter_min" = "seasonal_min")
+summ <- seasonal_mean %>% filter(season == "Summer") %>%
+  rename("summer_mean" = "seasonal_mean")
+# # plots for fun
+# ggplot() + geom_jitter(data=wint, aes(x=year, y=winter_mean, color = "Winter")) +
+#   geom_jitter(data=summ, aes(x=year, y=summer_mean, color = "Summer")) +
+#   scale_color_viridis_d("Season", direction = -1) +
+#   labs(y="Sea surface temperature (°C)", x="Year") +
+#   theme_minimal()
+
+# DDD[i,y] is Degree Death Days defined by the sum of the difference between 3C and the mean daily temperature for the winter at cell i and year y
+#
+# RDD[i,y] is the Reproductive Degree Days defined as the mean daily temperature minus 12C calculated from January 1 to end of May; I changed the timeline from Alex's definition because there were no RDDs before April 30
+# 
+# SDD[i,y] is the Spawning Degree Days defined as the mean daily temperature minus 19C Calculated on the same timeline as RDD
+
+oisst_dd <- december_shift %>% 
+  mutate(ddd = case_when(sst > 3 ~ 0,
+                         sst <= 3 ~ case_when(sst >= 0 ~ 3 - sst,
+                                             sst < 0 ~ 3 + abs(sst))),
+         rdd = case_when(month > 5 ~ 0,
+                         month <= 5 ~ case_when(sst < 12 ~ 0,
+                                                sst >= 12 ~ sst - 12)),
+         sdd = case_when(month > 5 ~ 0,
+                         month <= 5 ~ case_when(sst < 19 ~ 0,
+                                                sst >= 19 ~ sst - 19)),
+         )
+
+# ggplot(oisst_dd) + geom_point(aes(x=date, y=ddd, color="Death"), alpha=0.3) +
+#   geom_point(aes(x=date, y=rdd, color="Reproduction"), alpha=0.3) +
+#   geom_point(aes(x=date, y=rdd, color="Spawning"), alpha=0.3) +
+#   scale_color_viridis_d("Degree\ndayntype") +
+#   labs(y="Degree days", x="Year") +
+#   theme_minimal()
+
+yearly_dd <- oisst_dd %>% group_by(latitude, longitude, year) %>%
+  summarise(ddd = sum(ddd), rdd = sum(rdd), sdd = sum(sdd))
+
+dd_dat_transformed <- as.data.frame(yearly_dd, xy=T, wide=F)
+
+# more covariates
+# winter mean temp
+winter_dat_yearly <- wint %>%
+  select(latitude, longitude, year, winter_mean) %>%
+  group_by(latitude, longitude, year) %>% summarize(winter_mean = mean(winter_mean)) %>%
+  pivot_wider(names_from = year, values_from=winter_mean)
+winter_dat_yearly <- winter_dat_yearly[,3:27]
+# winter min temps
+winter_min_yearly <- wint %>%
+  select(latitude, longitude, year, winter_min) %>%
+  group_by(latitude, longitude, year) %>% summarize(winter_min = min(winter_min)) %>%
+  pivot_wider(names_from = year, values_from=winter_min)
+winter_min_yearly <- winter_min_yearly[,3:27]
+# death degree days
+ddd_dat_yearly <- yearly_dd %>%
+  select(latitude, longitude, year, ddd) %>%
+  pivot_wider(names_from = year, values_from = ddd)
+ddd_dat_yearly <- ddd_dat_yearly[,3:27]
+# reproductive degree days
+rdd_dat_yearly <- yearly_dd %>%
+  select(latitude, longitude, year, rdd) %>%
+  pivot_wider(names_from = year, values_from = rdd)
+rdd_dat_yearly <- rdd_dat_yearly[,3:27]
+
+# yearly summer temps
+summer_dat_yearly <- summ %>%
+  select(latitude, longitude, year, summer_mean) %>%
+  group_by(latitude, longitude, year) %>% summarize(summer_mean = mean(summer_mean)) %>%
+  pivot_wider(names_from = year, values_from=summer_mean)
+summer_dat_yearly <- summer_dat_yearly[,3:27]
+```
+
+```{r}
+#| label: establish a grid from oisst
+
+## establish a grid from bathymetry (needed for masking later)
+# build a 0/1 oisst raster
+bath_grid <- bath_var # create a new object
+values(bath_grid) <- 0.0001 # set all vals to near zero. we don't want exactly zero because then we can't get proportional abundance (crab/people) for offshore areas
+bath_grid <- mask(bath_grid, bath_var) # set land to na
+
+```
+
+```{r}
+#| label: scale spatial crab covariate by human pop
+
+# create a raster of mean human pop sums within 5km of each crab point for each pixel
+minpop <- min(filter(as.data.frame(crab.popvect$`_sum`), crab.popvect$`_sum` > 0)) # about 20
+pop.rast <- rasterize(x=crab.popvect, y=bath_var, field="_sum",
+                      fun=mean, background=0) + 20 # add a pseudocount so math can work later on. setting it to the lowest observed human pop value because otherwise values in the ocean scaled off the charts!
+
+propcrab.rast <- crab.rast / (pop.rast / 1000) # take proportional values
+propcrab.rast <- mask(x=propcrab.rast, mask=bath_grid) # set land to NA
+# note on interpretation: this means my response is crab observations per 1000 people within 5km, with an asterisk that i assigned a floor of 20 people to ensure remote observations aren't inflated or excluded
+
+```
+
+```{r}
+#| label: make spatial mean, min, and max oisst by year/month
+
+# claude code helped me think through setting times for these spatrasters
+
+oisst_split <- oisst_monthly_nona %>%
+  split(., .$year) # split into a list of dfs by yearmon
+
+# mean temps
+oisstmean_r <- lapply(names(oisst_split), \(i) { # iterate through list of yearmon dfs
+    df <- oisst_split[[i]] %>% ungroup() %>% select(longitude, latitude, monthly_sst)
+    r <- rast(df) # rasterize
+    names(r) <- i  # name the layer after the yearmon
+    terra::time(r) <- as.Date(paste0(oisst_split[[i]]$year[1],"-",oisst_split[[i]]$month[1],"-01")) # set time
+    r # output the rast
+  }) %>%
+  rast()
+
+# min temps
+oisstmin_r <- lapply(names(oisst_split), \(i) {
+    df <- oisst_split[[i]] %>% ungroup() %>% select(longitude, latitude, monthly_min)
+    r <- rast(df)
+    names(r) <- i
+    terra::time(r) <- as.Date(paste0(oisst_split[[i]]$year[1],"-",oisst_split[[i]]$month[1],"-01"))
+    r
+  }) %>%
+  rast()
+
+# max temps
+oisstmax_r <- lapply(names(oisst_split), \(i) {
+    df <- oisst_split[[i]] %>% ungroup() %>% select(longitude, latitude, monthly_max)
+    r <- rast(df)
+    names(r) <- i
+    terra::time(r) <- as.Date(paste0(oisst_split[[i]]$year[1],"-",oisst_split[[i]]$month[1],"-01"))
+    r
+  }) %>%
+  rast()
+```

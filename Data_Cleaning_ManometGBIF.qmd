@@ -1,0 +1,319 @@
+---
+title: "Manomet_Exploration"
+author: "Kai Frazer"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: libraries
+
+library(pacman)
+p_load(vroom, ncdf4, dplyr, terra, ggplot2, tidyterra, lubridate, glue, tidyr)
+```
+
+## Clean points
+
+```{r}
+#| label: loading manomet, naming columns, classifying variables
+
+m.raw <- vroom('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/BC crowdsource data_050726.csv') # from gabby: credit Manomet and NH SG and link to the dashboard.
+# survey here: https://survey123.arcgis.com/share/c21e7f55ff6e4fa29e81a024745b643b
+# dashboard here: https://www.arcgis.com/apps/dashboards/5dc1ad095f0e4fe989736da48522948
+
+m.edit <- m.raw %>% rename("NCrabs" = `# blue crabs`, "Date" = `Date of blue crab Sighting`,
+                      "LiveStatus" = `Alive or Dead?`, 
+                      "Method" = `How did you find the blue crab?`,
+                      "MethodOther" = `Other - How did you find the blue crab?`,
+                      "NFemale" = `# females`, "NMale" = `# males`,
+                      "NMatureFemales" = `# mature females`, 
+                      "NImmatureFemales" = `# immature females`,
+                      "NEggBearing" = `# egg bearing females`) %>%
+  select(NCrabs, Date, Sex, LiveStatus, Method, MethodOther, 
+         NFemale, NMale, NMatureFemales, NImmatureFemales,
+         NEggBearing, x, y) %>%
+  mutate(Date = mdy_hm(Date), Year = year(Date)) %>%
+  filter(x >= -72) # GoM plus Rhode Island
+# 215 points
+```
+
+```{r}
+#| label: loading gbif, naming columns, classifying variables
+
+g.raw <- vroom('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Data/GBIF_BlueCrab_Mar2026Download/KFedit1_occurrence.csv') # download raw data - KFedit1 is just converting the .txt to a .csv
+
+# build a dataframe that shows unique values for each column so I can get a sense for what each colname means and how to filter
+# colvals <- data.frame(name = colnames(crab), vals = NA)
+# for(i in 1:nrow(colvals)) {vals <- select(crab, colvals$name[i])
+#   colvals$vals[i] <- c(unique(vals))}
+
+g.edit <- g.raw %>% select(publisher, eventDate, eventTime, year, month, day, sex, 
+                           lifeStage, vitality, eventDate, samplingProtocol,
+                           sampleSizeValue, sampleSizeUnit, samplingEffort, 
+                           waterBody, countryCode, stateProvince, locality,
+                           decimalLatitude, decimalLongitude, 
+                           coordinateUncertaintyInMeters, georeferenceProtocol, 
+                           dateIdentified, depth, depthAccuracy, dateIdentified, 
+                           gbifID, license, publisher, datasetID, institutionCode, collectionCode, ownerInstitutionCode,
+                              occurrenceID, catalogNumber, eventID) %>%
+  rename(x = decimalLongitude, y = decimalLatitude) %>%
+  mutate(Date = ymd(glue("{g.raw$year}-{g.raw$month}-{g.raw$day}"))) %>%
+  filter(countryCode %in% c("US", "CA"), # GoM filtering to start by country (no NAs)
+         stateProvince %in% c("Massachusetts", "New Hampshire", "Maine", "Rhode Island",
+                              "Nova Scotia") | is.na(stateProvince),
+         x >= -72) # crop to the GoM
+
+```
+
+```{r}
+#| label: set up land data for plots
+
+## high quality land outline
+bath <- nc_open("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Data/GEBCO_02_Jun_2026_ef7e59d04092/gebco_2026_n45.0_s41.0_w-72.0_e-63.0.nc") # from https://download.gebco.net/
+lat <- ncvar_get(bath, "lat"); lon <- ncvar_get(bath, "lon")
+bath_var <- ncvar_get(bath, "elevation") %>%
+ rast() %>% t() %>% flip() %>%
+  app(fun=function(x){ x[x > 0] <- NA; return(x)})
+ext(bath_var) <- c(xmin=min(lon), xmax=max(lon), ymin=min(lat), ymax=max(lat))
+land_outline <- bath_var %>% app(fun=function(x){x[is.na(x)==T] <- 1; return(x)}) %>%
+  app(fun=function(x){x[x<=0] <- NA; return(x)}) %>% as.polygons() # outline!
+
+crs(land_outline) <- "EPSG:4326"
+
+```
+
+```{r}
+#| label: plot raw data
+#| run: false
+
+## crab point vector
+m.vect <- vect(m.edit) # vectorize manomet
+crs(m.vect) <- "EPSG:4326"
+
+g.vect <- vect(g.edit) # vectorize gbif
+crs(g.vect) <- "EPSG:4326"
+
+
+ggplot() + geom_spatvector(data = land_outline, na.value = "white") + 
+  geom_spatvector(data = m.vect, aes(color = "Manomet")) +
+  geom_spatvector(data = g.vect, aes(color = "GBIF")) +
+  scale_color_viridis_d() +
+  coord_sf() + # to scale the map
+  theme_classic()
+```
+
+```{r}
+#| label: point-by-point validation
+#| run: false
+
+# # function to look at a map and dataset values of choice for a given point
+# pointcheck <- function(dataset, i, out.cols, land_outline) { # assumes dataset has x and y cols
+#   # crop map to that point
+#   land_crop <- crop(land_outline, c(dataset$x[i] - 0.5, dataset$x[i] + 0.5,
+#                                     dataset$y[i] - 0.5, dataset$y[i] + 0.5)) 
+#   vect <- vect(dataset[i,]) # vectorize the point
+#   # build a plot for the point
+#   plot <- ggplot() + geom_spatvector(data = land_crop) +
+#     geom_spatvector(data = vect) +
+#     coord_sf() + theme_classic()
+#   out <- select(dataset[i,], out.cols) # printing material
+#   return(c(plot, out))
+# }
+# 
+# # get the data i didn't clean before (previously i was looking at points north of woods hole)
+# g.2clean <- filter(g.edit, y < 41.513648)
+# m.2clean <- filter(m.edit, y < 41.513648)
+#          
+# # visually check points by looking at a 1°x1° map around them. if they appear to be on land, look up the lat/lon on google maps. most points that appeared to be slightly on land were actually in a river or such, but a couple were in neighborhoods (my guess is that folks remembered to enter their observation later in their day and chose their active location); points that looked like they were more than a block from a water body were manually identified and removed
+# # also visually checked for duplicates by panning through maps; if two points were in the same place in a row with the same date, i marked them as duplicates and removed one at random
+# 
+# # gbif
+# for(i in 1:nrow(g.2clean)){ # reviewed all
+#   out <- pointcheck(g.2clean, i,
+#                     c("Date", "samplingProtocol", "stateProvince", "waterBody",
+#                       "locality", "publisher",
+#                       "y", "x"),
+#                     land_outline)
+#   print(out)
+#   print(i)
+#   browser()
+# }
+# # points removed from dataset filtered to north of woods hole (y < 41.513648):
+# # points 239, 104, 130, 133, 146, 188, 268, 305, 310, 411, 525, 672, 719 are on land several blocks away from water
+# # 613 is in a pond that doesn't appear to be attached to a major river (41.6904, -70.11356) - kept but of note
+# # 729 and 730 are duplicates
+# # lesson learned: a lot of points in rivers or estuarine bodies pretty far inland, might be important to have a higher resolution basemap
+# # g.rm <- c(239,104,130,133,146,188,268,305,310,411,525,672,719, 729) # points to remove from gbif data as noted above
+# # after adding points south of woods hole but east of -72:
+# # points on land: 256, 279
+# g.rm <- c(256, 279)
+# 
+# # manomet
+# for(i in 1:nrow(m.2clean)){ # reviewed all
+#   out <- pointcheck(m.2clean, i,
+#                     c("Date", "Method", "MethodOther", "LiveStatus", "x", "y"), land_outline)
+#   print(out)
+#   print(i)
+#   browser()
+# }
+# # points removed from dataset filtered to north of woods hole (y < 41.513648):
+# # 16 and 17 are duplicates with different methods of id
+# # 43°55'37.1"N 69°51'50.2"W appears to have a farm that found crabs in a bull rake, then set up a trap for the crabs. a lot of entries in this location
+# # 57 is quite far offshore for lobstering (the method) - check with sea grant person how far lobstermen might go. 88 is offshore but less so - keeping it because a quick search confirmed that offshore lobstering does happen
+# # 78 is in the middle of the saint lawrence river. remove for unlikely location and for being out of study area
+# # 210 and 211 are duplicates
+# # 106 and 107 are slightly different locations but i think duplicates
+# # m.rm <- c(16,78,210,106) # points to remove from manomet data as noted above
+# # no points to remove after adding south of woods hole east of -72
+# 
+# # remove points manually
+# g.newclean <- g.2clean[-g.rm,]
+# m.newclean <- m.2clean
+# 
+# # check that i removed duplicates
+# g.newclean$dup <- duplicated(g.newclean[, c("Date", "x", "y")])
+# g.newclean <- g.newclean %>% filter(dup == F) # removed 16 points first round, 8 points second round
+# m.newclean$dup <- duplicated(m.newclean[, c("Date", "x", "y")]) # all false
+# 
+# # access cleaned data north of woods hole
+# g.clean <- readRDS("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/20260603_GBIFCleaned_NofWoodsHole.rds")
+# m.clean <- readRDS("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/20260603_ManometCleaned_NofWoodsHole.rds")
+# 
+# # combine north of woods hole and south of woods hole but east of -72 (new data)
+# g <- full_join(g.clean, g.newclean)
+# m <- full_join(m.clean, m.newclean)
+# 
+# # save for later
+# saveRDS(g, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/2026060302_GBIFCleaned_NofWoodsHole.rds")
+# saveRDS(m, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/2026060302_ManometCleaned_NofWoodsHole.rds")
+# 
+# ## stats on data cleaning:
+# # removed 15 points on land and 25 points that were duplicated from gbif data
+# # removed 23 duplicates and 1 out of study area from manomet data
+```
+
+```{r}
+#| label: bring in cleaned data
+g <- readRDS("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/2026060302_GBIFCleaned_NofWoodsHole.rds")
+m <- readRDS("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/2026060302_ManometCleaned_NofWoodsHole.rds")
+```
+
+```{r}
+#| label: combine datasets and clean colnames
+
+g.edit <- g %>% 
+  mutate(source = "GBIF", 
+         sex = case_when(sex=="Male" ~ 0, sex=="Female" ~ 1, sex=="Indeterminate" ~ NA),
+         maturity = case_when(lifeStage=="Juvenile" ~ 0, lifeStage=="Adult" ~ 1),
+         alive = case_when(vitality=="dead" ~ 0, vitality=="alive" ~ 1, 
+                           vitality=="undetermined" ~ NA)) %>%
+  rename(date = Date, gbif.source = publisher, method = samplingProtocol,
+         effort = samplingEffort, country = countryCode, state = stateProvince,
+         coord.uncertainty.m = coordinateUncertaintyInMeters) %>%
+  select(date, x, y, coord.uncertainty.m, alive, sex, maturity, 
+         depth, country, state, method, effort, source, gbif.source)
+
+m.edit <- m %>% 
+  mutate(source = "Manomet",
+         sex = case_when(Sex=="Male" & NCrabs==1 ~ 0, Sex=="Female" & NCrabs==1 ~ 1, 
+                         Sex=="Indeterminate" ~ NA),
+         alive = case_when(LiveStatus=="Dead" & NCrabs==1 ~ 0, 
+                           LiveStatus=="Alive" & NCrabs==1 ~ 1),
+         maturity = case_when(NMatureFemales==1 & NCrabs==1 ~ 1,
+                              NImmatureFemales==1 & NCrabs==1 ~ 0),
+         ncrabs = case_when(is.na(NCrabs)==T ~ 1, is.na(NCrabs)==F ~ NCrabs),
+         method = case_when(Method=="other" ~ MethodOther, Method!="other" ~ Method)) %>%
+  uncount(ncrabs) %>%
+  rename(date = Date) %>%
+  select(date, x, y, alive, sex, maturity, method, source)
+                  
+crabs <- full_join(g.edit, m.edit)
+crab.vect <- vect(crabs) # we will need a vector for many things later :)
+crs(crab.vect) <- "EPSG:4326"
+
+crabs_before <- filter(crabs, source=="GBIF", x < -68)
+crab.vect.before <- vect(crabs_before)
+crs(crab.vect.before) <- "EPSG:4326"
+
+#writeVector(crab.vect, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/manomet_and_gbif_clean.shp")
+```
+
+```{r}
+#| label: plot cleaned data
+
+ggplot() + geom_spatvector(data = land_outline) + 
+  geom_spatvector(data = crab.vect, aes(color = source), 
+                  alpha=0.75) +
+  scale_color_viridis_d("Data source", option="H", direction=-1) +
+  coord_sf() + # to scale the map
+  labs(x = "Latitude", y = "Longitude", title = "Blue crab observations") +
+  theme_bw() # new data
+
+ggplot() + geom_spatvector(data = land_outline) + 
+  geom_spatvector(data = crab.vect.before, aes(color = source), 
+                  alpha=0.75) +
+  scale_color_viridis_d("Data source", option="H", direction=-1) +
+  coord_sf() + # to scale the map
+  labs(x = "Latitude", y = "Longitude", title = "Blue crab observations") +
+  theme_bw() # new data
+```
+
+```{r}
+#| label: check for duplicates
+
+crabs$dup <- duplicated(crabs[, c("date", "x", "y")], fromLast=T) # this means that the first occurrence of dup values will be flagged, i.e. we'll get dups from GBIF
+View(filter(crabs, dup == T)) # visually inspected to see that all the duplicates were from the Manomet dataset, which (from working with the data), i know that is because there were observations containing multiple crabs that i intentionally duplicated from that dataset. the good thing is that there aren't any dups from the GBIF source
+
+```
+
+## Old code
+
+```{r}
+#| label: assign human pop values to points in qgis
+
+# notes on what i did in qgis:
+#
+# From R, make sure I'm setting a CRS before saving a file (code is correct above). I saved as EPSG:4326 since that's the best the R vocabulary had available.
+# 
+# Drag the .shp file into QGIS and click continue with preset reprojection.
+# 
+# Right click the layer -> Export -> ESRI shapefile -> change the CRS to EPSG:26919
+# 
+# Create a 5000m buffer around the points
+# 
+# Load population data:
+# 
+# Drag in population .shp file
+# 
+# Create a new polygon layer. Edit and draw a shape of the extent of the GoM.
+# 
+# Choose the Clip Raster by Extent tool, setting the raster to the population layer and using the ... feature to select extent from the clipping layer.
+# 
+# Export the clipped layer and save as with the 26919 projection.
+# 
+# Calculate population in the point buffers:
+# 
+# Use zonal statistics to calculate sum and mean population in each buffer
+# 
+# Open the attribute table of each the zonal statistics layer and the point layer and add an attribute (top right). Name the attribute point_id and select @id as the value. For the zonal statistics layer, for some reason you'll need to subtract 1 so it starts at zero. Then use the join attributes by field value tool, joining by the point_id field (with points in the first slot and the buffer layer in the second slot) to get points with the population values in their attribute tables.
+# 
+# Calculate distance to coast
+# 
+# Add GSHHS coastline .dbf
+# 
+# Haven't completed this step yet
+# 
+# Human population
+# 
+# Population data citation: Center For International Earth Science Information Network-CIESIN-Columbia University. (2017). <i>Gridded Population of the World, Version 4 (GPWv4): Population Density, Revision 11</i> (Version 4.11) [Data set]. Palisades, NY: NASA Socioeconomic Data and Applications Center (SEDAC). https://doi.org/10.7927/H49C6VHW Date Accessed: 2026-03-23
+# 
+# pop <- rast('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Data/EarthData_Population/gpw_v4_population_density_rev11_2020_30_sec.tif') %>% crop(ext(-72,-69,41,45))
+
+crab.popvect <- vect("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/For_QGIS/points_withpop.shp") %>% project("WGS84") # projecting into a familiar lat/lon format for easier processing in the dataframe. WGS84 will be less accurate to distances in the region than the projection we used in QGIS, but now that we've calculated populations within 5km of the crabs, we're done with the most distance-intensive part of the analysis.
+crab.pop <- terra::as.data.frame(crab.popvect, geom="XY") %>% # into a dataframe
+  select(point_id, x, y, date, coord.unce, alive, sex, maturity, depth, country, state,
+         method, effort, source, gbif.sourc, `_sum`, `_mean`) %>% # we get a lot of dup columns when we combine analyses in qgis; narrow back down
+  rename("popsum_5km" = `_sum`, "popmean_5km" = `_mean`)
+```

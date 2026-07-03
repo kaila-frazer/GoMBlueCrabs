@@ -1,0 +1,1141 @@
+---
+title: "JAGS_Modeling"
+author: "Kai Frazer"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+#### Claude links:
+
+Thinking through different distributions for the response here: <https://claude.ai/share/c1041555-6b52-49c7-994c-d15e942274bd>
+
+Working through memory issues here: <https://claude.ai/share/c1041555-6b52-49c7-994c-d15e942274bd>
+
+```{r}
+#| label: libraries and wd
+#| warning: false
+
+library(pacman)
+p_load(R2jags, dplyr, terra, ggplot2)
+
+setwd('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/')
+```
+
+```{r}
+#| label: load data
+
+matrices <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/ModelReady!!/modelready_matrices.rds')
+
+#crab <- matrices[["crab_abun"]]
+```
+
+## Trying response distributions out
+
+```{r}
+#| label: Model 1a: Simple_Poisson
+
+# Abundance[i,year] ~ Poisson(λ[i,year])
+# λ[i,year] ~ Uniform(0, 50)
+
+sink("mod1a.txt")
+cat("model {
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year])
+    
+    lambda[i,year] ~ dunif(0,50)
+    
+    #### derived parameters ####
+    
+    # model-simulated data
+    crab.new[i,year] ~ dpois(lambda[i,year])
+
+    # Pearson's residuals for both
+    pr[i,year] <- (crab[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    pr.new[i,year] <- (crab.new[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    
+    # square pr's
+    pr2[i,year] <- pr[i,year]^2
+    pr2.new[i,year] <- pr.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+",fill = TRUE)
+sink()
+
+# data
+mod1a.data <- list(ncell = nrow(crab),
+                  nyear = ncol(crab),
+                  crab = crab)
+
+# Initial values
+mod1a.inits <- function()list()
+
+# Parameters monitored
+mod1a.params <- c("lambda", "crab.new",
+                 "bp") 
+
+# MCMC settings
+nc <- 3; nt <- 1; ni <- 10000; nb <- 1000
+
+# run the model
+out_mod1a <- jags(mod1a.data, mod1a.inits, mod1a.params, "mod1a.txt", 
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, 
+                 working.directory = getwd()) 
+
+print(out_mod1a, dig = 2) 
+saveRDS(out_mod1a, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod1a.rds')
+
+# notes:
+
+# rhats: 1-1.01
+# bp: 0.53 (0-1)
+# pv: 12650.3
+# dic: 25704.8
+```
+
+```{r}
+#| label: Model 1b: Zero_Inflated
+
+# original concept:
+# Abundance[i,year] ~ Poisson(λ[i,year]) * ζ[i,year]
+# λ[i,year] ~ Uniform(0, 50)
+# ζ[i, year] ~ Bernoulli(Ψ)
+# Ψ ~ Uniform(0, 1)
+
+sink("mod1b.txt")
+cat("model {
+
+    #### universal prior ####
+    
+    psi ~ dunif(0,1)
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year] * z[i,year]) 
+    
+    z[i,year] ~ dbern(psi)
+    
+    lambda[i,year] ~ dunif(0,50)
+    
+    #### derived parameters ####
+    
+    # calculating the marginal variance
+    mu[i,year]  <- psi * lambda[i,year]
+    v[i,year] <- mu[i,year] + psi * (1 - psi) * lambda[i,year]^2
+
+    # Pearson residual (ZIP-correct) 
+    presid[i,year] <- (crab[i,year] - mu[i,year]) / sqrt(v[i,year])
+    crab.new[i,year] ~ dpois(lambda[i,year] * z[i,year])   
+    presid.new[i,year] <- (crab.new[i,year] - mu[i,year]) / sqrt(v[i,year])
+    
+    # square PR's
+    pr2[i,year] <- presid[i,year]^2
+    pr2.new[i,year] <- presid.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+",fill = TRUE)
+sink()
+
+# data
+mod1b.data <- list(ncell = nrow(crab),
+                  nyear = ncol(crab),
+                  crab = crab)
+
+# Initial values
+mod1b.inits <- function()list(z = matrix(1, ncol=ncol(crab),
+                                         nrow=nrow(crab)))
+
+# Parameters monitored
+mod1b.params <- c("lambda", "z", "crab.new",
+                 "bp") 
+
+# MCMC settings
+nc <- 3; nt <- 1; ni <- 10000; nb <- 1000
+
+# run the model
+out_mod1b <- jags(mod1b.data, mod1b.inits, mod1b.params, "mod1b.txt", 
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, 
+                 working.directory = getwd())
+
+print(out_mod1b, dig = 2)
+saveRDS(out_mod1b, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod1b.rds')
+
+
+# notes:
+
+# rhats: 1 for lambdas, 1-1.13 for zs
+# bp: 0.07 (0-1)
+# pv: 184.2
+# dic: 777.2
+
+# questions for rem:
+# i asked claude to check this for errors after i adjusted the ZI PRs and it suggested:
+# 1. to calculate crab.new values using a z.new value calculated from its z.new ~ bernoulli(psi), rather than using the same z[i,year] because that creates a crab.new that's based on whether the cell was originally occupied
+# 2. one point at [i,year] defines both z[i,year] and lambda[i,year] so lambda needs a more universal mu.lambda prior
+# i haven't implemented either suggestion because they're both theoretically distinct from what we learned in class, but i could see both suggestions making sense. thoughts?
+```
+
+```{r}
+#| label: Model 1bi: Zero_inflated_Poisson_wHyperparameters
+
+# Claude edit:
+# Abundance[i,year] ~ Poisson(λ[i,year]) * ζ[i,year]
+# log(λ[i,year]) = mu.lambda + alpha[i] + beta[year]
+# alpha[i] ~ Normal(0, tau.alpha)
+# beta[year] ~ Normal(0, tau.beta)
+# mu.lambda ~ Normal(0, 0.01)
+# tau.alpha ~ Gamma(0.01, 0.01)
+# tau.beta ~ Gamma(0.01, 0.01)
+# ζ[i, year] ~ Bernoulli(Ψ)
+# Ψ ~ Uniform(0, 1)
+
+# also, changed from Model 1b because crab.new uses a new distribution for z
+
+sink("mod1bi.txt")
+cat("model {
+
+    #### universal prior ####
+    
+    psi ~ dunif(0,1)
+    tau.alpha ~ dgamma(0.01,0.01)
+    tau.beta ~ dgamma(0.01,0.01)
+    mu.lambda ~ dnorm(0,0.01)
+    
+    #### cell-level random effect ####
+    
+    for(i in 1:ncell){
+      alpha[i] ~ dnorm(0, tau.alpha)
+    }
+    
+    #### year-level random effect ####
+    
+    for(year in 1:nyear){
+      beta[year] ~ dnorm(0, tau.beta)
+    }
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year] * z[i,year]) 
+    
+    z[i,year] ~ dbern(psi)
+    
+    log(lambda[i,year]) <- mu.lambda + alpha[i] + beta[year]
+    
+    #### derived parameters ####
+    
+    # calculating the marginal variance
+    mu[i,year]  <- psi * lambda[i,year]
+    v[i,year] <- mu[i,year] + psi * (1 - psi) * lambda[i,year]^2
+
+    # Pearson residual (ZIP-correct) 
+    presid[i,year] <- (crab[i,year] - mu[i,year]) / sqrt(v[i,year])
+    z.new[i,year] ~ dbern(psi)
+    crab.new[i,year] ~ dpois(lambda[i,year] * z.new[i,year])   
+    presid.new[i,year] <- (crab.new[i,year] - mu[i,year]) / sqrt(v[i,year])
+    
+    # square PR's
+    pr2[i,year] <- presid[i,year]^2
+    pr2.new[i,year] <- presid.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+",fill = TRUE)
+sink()
+
+# data
+mod1bi.data <- list(ncell = nrow(crab),
+                  nyear = ncol(crab),
+                  crab = crab)
+
+# Initial values
+mod1bi.inits <- function()list(z = matrix(1, ncol=ncol(crab),
+                                         nrow=nrow(crab)))
+
+# Parameters monitored
+mod1bi.params <- c("lambda", "z", "crab.new", "psi",
+                 "bp") 
+
+# MCMC settings
+nc <- 3; nt <- 1; ni <- 10000; nb <- 1000
+
+# run the model
+out_mod1bi <- jags(mod1bi.data, mod1bi.inits, mod1bi.params, "mod1bi.txt", 
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, 
+                 working.directory = getwd())
+
+print(out_mod1bi, dig = 2)
+saveRDS(out_mod1bi, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod1bi.rds')
+
+# notes:
+
+# bp: 0.33
+# rhats: 1 for bp, 1-1.3 for crab.news
+# pv: 193.8
+# dic: 1090.2
+```
+
+```{r}
+#| label: Model 1c: Overdispersed_Poisson
+
+# Abundance[i,year] ~ Poisson(λ[i,year])
+# Log(λ[i,year]) = β0 + ε[i,year]
+# β0 ~ Normal(0, 0.001)
+# ε[i,year] ~ Normal(0, σ^2)
+# σ ~ Uniform(0, 10)
+
+sink("mod1c.txt")
+cat("model {
+    
+    #### priors ####
+    
+    tau <- 1/sigma^2
+    sigma ~ dunif(0,10)
+    beta0 ~ dnorm(0,0.001)
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year])
+    
+    log(lambda[i,year]) <- beta0 + e[i,year]
+    
+    e[i,year] ~ dnorm(0,tau)
+    
+    #### derived parameters ####
+    
+    # model-simulated data
+    crab.new[i,year] ~ dpois(lambda[i,year])
+
+    # Pearson's residuals for both
+    pr[i,year] <- (crab[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    pr.new[i,year] <- (crab.new[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    
+    # square pr's
+    pr2[i,year] <- pr[i,year]^2
+    pr2.new[i,year] <- pr.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+",fill = TRUE)
+sink()
+
+# data
+mod1c.data <- list(ncell = nrow(crab),
+                  nyear = ncol(crab),
+                  crab = crab)
+
+# Initial values
+mod1c.inits <- function()list()
+
+# Parameters monitored
+mod1c.params <- c("lambda", "beta0", "e",
+                  "crab.new", "bp") 
+
+# MCMC settings
+nc <- 3; nt <- 1; ni <- 10000; nb <- 1000
+
+# run the model
+out_mod1c <- jags(mod1c.data, mod1c.inits, mod1c.params, "mod1c.txt", 
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, 
+                 working.directory = getwd())
+
+print(out_mod1c, dig = 2)
+saveRDS(out_mod1c, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod1c.rds')
+
+# notes:
+
+# bp: 0.36 (0-1)
+# dic: 1278.8
+# pv: 443.7
+# rhats: 1.18 for beta0, 1-1.13 for es
+```
+
+#### Comparing overdispersion and zero-inflated distributions:
+
+```{r}
+#| label: calculating rhats for structural parameters
+
+# code from Claude
+
+# 1c; overdispersed
+rhat_over <- out_mod1c$BUGSoutput$summary[, "Rhat"]
+structural_params_over <- rhat_over[grepl("^(beta0|e\\[)", names(rhat_over))] # c("lambda", "beta0", "e", "crab.new", "bp") 
+rhat_over_df <- data.frame(
+  parameter = names(structural_params_over),
+  Rhat = as.numeric(structural_params_over)
+) %>%
+  arrange(desc(Rhat))
+
+# 1bi; zero-inflated
+rhat_zip <- out_mod1bi$BUGSoutput$summary[, "Rhat"]
+structural_params_zip <- rhat_zip[grepl("^(psi|z\\[)", names(rhat_zip))] # c("lambda", "z", "crab.new","bp")  
+rhat_zip_df <- data.frame(
+  parameter = names(structural_params_zip),
+  Rhat = as.numeric(structural_params_zip)) %>%
+  arrange(desc(Rhat))
+
+# R-hats both vary from 1 to 1.29 or 1.29
+```
+
+[Conclusion:]{.underline} both are very very similar. Technically, zero-inflated has slightly lower Rhats and DIC. I'm going to use the overdispersed model for simplicity, though. I feel more confident in my ability to write about that model and describe it, and AI had less of a role in generating the math, which I think leads to a lower likelihood of error. I may switch to zero-inflated in the future but it's not necessary right now.
+
+## Linear model
+
+```{r}
+#| label: Model 2a: Overdispersed with all covariates and Gibbs selection
+
+# Crab[i,year] ~ Poisson(lambda[i,year])
+# log(lambda[i,year]) = b0 + 
+# ... +
+# eps[i,year]
+
+sink("mod2a.txt")
+cat("model {
+
+    #### priors ####
+    
+    b0 ~ dnorm(0,0.1)
+    b1 ~ dnorm(0,0.1)
+    b2 ~ dnorm(0,0.1)
+    b3 ~ dnorm(0,0.1)
+    b4 ~ dnorm(0,0.1)
+    b5 ~ dnorm(0,0.1)
+    b6 ~ dnorm(0,0.1)
+    b7 ~ dnorm(0,0.1)
+    b8 ~ dnorm(0,0.1)
+    b9 ~ dnorm(0,0.1)
+    b10 ~ dnorm(0,0.1)
+    b11 ~ dnorm(0,0.1)
+
+    # overdispersed priors
+    tau <- 1/sigma^2
+    sigma ~ dunif(0,10)
+    
+    # indicator variable priors
+    # indicator variable priors
+    for (i in 1:11){
+    w[i] ~ dbern(0.5)
+    }
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year])
+    
+    log(lambda[i,year]) = b0 + 
+    b1 * depth[i] * w[1] + 
+    b2 * winter_mean[i,year] * w[2]  + b3 * winter_min[i,year] * w[3] + 
+    b4 * summer_mean[i,year] * w[4] + b5 * summer_max[i,year] * w[5] +
+    b6 * winter_flags[i,year] * w[6] + 
+    b7 * spring_flags[i,year] * w[7] + b8 * yearly_flags[i,year] * w[8] +
+    b9 * ddd[i,year] * w[9] + b10 * rdd[i,year] * w[10] +
+    b11 * pop[i] * w[11] +
+    eps[i,year]
+    
+    eps[i,year] ~ dnorm(0,tau)
+
+    #### derived parameters ####
+    
+    # model-simulated data
+    crab.new[i,year] ~ dpois(lambda[i,year])
+
+    # Pearson's residuals for both
+    pr[i,year] <- (crab[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    pr.new[i,year] <- (crab.new[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    
+    # square pr's
+    pr2[i,year] <- pr[i,year]^2
+    pr2.new[i,year] <- pr.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+",fill = TRUE)
+sink()
+
+# data
+mod2a.data <- list(ncell = nrow(matrices[["crab_abun"]]),
+                  nyear = ncol(matrices[["crab_abun"]]),
+                  depth = scale(matrices[["depth"]])[,1],
+                  winter_mean = scale(matrices[["winter_mean"]])[,1:44],
+                  winter_min = scale(matrices[["winter_min"]])[,1:44],
+                  summer_mean = scale(matrices[["summer_mean"]])[,1:44],
+                  summer_max = scale(matrices[["summer_max"]])[,1:44],
+                  winter_flags = scale(matrices[["winter_flags"]])[,1:44],
+                  spring_flags = scale(matrices[["spring_flags"]])[,1:44],
+                  yearly_flags = scale(matrices[["yearly_flags"]])[,1:44],
+                  ddd = scale(matrices[["ddd"]])[,1:44],
+                  rdd = scale(matrices[["rdd"]])[,1:44],
+                  pop = scale(matrices[["pop"]])[,1],
+                  crab = matrices[["crab_abun"]])
+
+# Initial values
+mod2a.inits <- function()list()
+
+# Parameters monitored
+mod2a.params <- c("b0", "b1", "b2",
+                  "b3", "b4", "b5",
+                  "b6", "b7", "b8",
+                  "b9", "b10", "b11",
+                  "bp", "eps", "w") 
+
+# MCMC settings
+nc <- 3; nt <- 1; ni <- 10000; nb <- 1000
+
+# run the model
+out_mod2a <- jags(mod2a.data, mod2a.inits, mod2a.params, "mod2a.txt", 
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, 
+                 working.directory = getwd()) # took maybe half an hour
+
+saveRDS(out_mod2a, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod2a.rds')
+
+print(out_mod2a, dig = 2)
+
+# notes:
+
+# pv: 529.4
+# dic: 1353.7
+# rhats: 1-1.03 for eps, 1-1.3 for betas and 2.25 for beta0
+# bp: 0.29 (0-1) n.eff 250
+# see betas and omegas below
+
+# key to the betas and omegas:
+# 1 = depth
+# 2 = winter_mean; 3 = winter_min
+# 4 = summer_mean; 5 = summer_max
+# 6 = winter_flags; 7 = spring_flags
+# 8 = yearly_flags
+# 9 = ddd; 10 = rdd;
+# 11 = pop
+```
+
+![](images/clipboard-2159696272.png){width="327"}
+
+![](images/clipboard-2328007266.png){width="328" height="131"}
+
+```{r}
+#| label: Model 2b: Overdispersed with Gibbs-selected variables
+
+# Crab[i,year] ~ Poisson(lambda[i,year])
+# log(lambda[i,year]) = b0 + 
+# b1 * depth[i] * w[1] + 
+# b2 * winter_mean[i,year] * w[2] +
+# b3 * summer_mean[i,year] * w[3] + 
+# b4 * pop[i] * w[4] +
+# eps[i,year]
+
+sink("mod2b.txt")
+cat("model {
+
+    #### priors ####
+    
+    b0 ~ dnorm(0,1)
+    b1 ~ dnorm(0,1)
+    b2 ~ dnorm(0,1)
+    b3 ~ dnorm(0,1)
+    b4 ~ dnorm(0,1)
+
+    # overdispersed priors
+    tau <- 1/sigma^2
+    sigma ~ dunif(0,10)
+    
+    # indicator variable priors
+    for (i in 1:4){
+    w[i] ~ dbern(0.5)
+    }
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year])
+    
+    log(lambda[i,year]) = b0 + 
+    b1 * depth[i] * w[1] + 
+    b2 * winter_mean[i,year] * w[2] + 
+    b3 * summer_mean[i,year] * w[3] + 
+    b4 * pop[i] * w[4] +
+    eps[i,year]
+    
+    eps[i,year] ~ dnorm(0,tau)
+
+    #### derived parameters ####
+    
+    # model-simulated data
+    crab.new[i,year] ~ dpois(lambda[i,year])
+
+    # Pearson's residuals for both
+    pr[i,year] <- (crab[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    pr.new[i,year] <- (crab.new[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    
+    # square pr's
+    pr2[i,year] <- pr[i,year]^2
+    pr2.new[i,year] <- pr.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+",fill = TRUE)
+sink()
+
+# data
+mod2b.data <- list(ncell = nrow(matrices[["crab_abun"]]),
+                  nyear = ncol(matrices[["crab_abun"]]),
+                  depth = scale(matrices[["depth"]])[,1],
+                  winter_mean = scale(matrices[["winter_mean"]])[,1:44],
+                  summer_mean = scale(matrices[["summer_mean"]])[,1:44],
+                  pop = scale(matrices[["pop"]])[,1],
+                  crab = matrices[["crab_abun"]])
+
+# Initial values
+mod2b.inits <- function()list()
+
+# Parameters monitored
+mod2b.params <- c("b0", "b1", "b2",
+                  "b3", "b4",
+                  "bp", "w", "eps") 
+
+# MCMC settings
+nc <- 3; nt <- 1; ni <- 1000; nb <- 100 # was 10000 and was getting low n.effs for a few
+
+# run the model
+out_mod2b <- jags(mod2b.data, mod2b.inits, mod2b.params, "mod2b.txt", 
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, 
+                 working.directory = getwd()) # was going to take ~40, crashed at ~30, next run started at 9:20 ...
+
+saveRDS(out_mod2b, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod2b.rds')
+
+print(out_mod2b, dig = 2)
+
+# notes:
+
+# pv: 482.1
+# dic: 1306.0
+# rhats: good for eps, now 1-1.12 for betas and 1.18 for b0
+# bp: 0.28
+# see betas below
+
+# key to the betas:
+# 1 = depth
+# 2 = winter_mean
+# 4 = summer_mean
+# 11 = pop
+```
+
+![](images/clipboard-1257723567.png){width="302"}
+
+![](images/clipboard-4030080672.png){width="301"}
+
+```{r}
+#| label: Model 2c: Overdispersed with winter_mean, depth, and pop
+
+# Crab[i,year] ~ Poisson(lambda[i,year])
+# log(lambda[i,year]) = b0 + 
+# b1 * depth[i] + 
+# b2 * winter_mean[i,year]  +
+# b3 * pop[i] +
+# eps[i,year]
+
+sink("mod2c.txt")
+cat("model {
+
+    #### priors ####
+    
+    b0 ~ dnorm(0,0.1)
+    b1 ~ dnorm(0,0.1)
+    b2 ~ dnorm(0,0.1)
+    b3 ~ dnorm(0,0.1)
+
+    # overdispersed priors
+    tau <- 1/sigma^2
+    sigma ~ dunif(0,10)
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year])
+    
+    log(lambda[i,year]) = b0 + 
+    b1 * depth[i] + 
+    b2 * winter_mean[i,year] + 
+    b3 * pop[i] +
+    eps[i,year]
+    
+    eps[i,year] ~ dnorm(0,tau)
+
+    #### derived parameters ####
+    
+    # model-simulated data
+    crab.new[i,year] ~ dpois(lambda[i,year])
+
+    # Pearson's residuals for both
+    pr[i,year] <- (crab[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    pr.new[i,year] <- (crab.new[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    
+    # square pr's
+    pr2[i,year] <- pr[i,year]^2
+    pr2.new[i,year] <- pr.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+",fill = TRUE)
+sink()
+
+# data
+mod2c.data <- list(ncell = nrow(matrices[["crab_abun"]]),
+                  nyear = ncol(matrices[["crab_abun"]]),
+                  depth = scale(matrices[["depth"]])[,1],
+                  winter_mean = scale(matrices[["winter_mean"]])[,1:44],
+                  pop = scale(matrices[["pop"]])[,1],
+                  crab = matrices[["crab_abun"]])
+
+# Initial values
+mod2c.inits <- function()list()
+
+# Parameters monitored
+mod2c.params <- c("b0", "b1", "b2",
+                  "b3", "bp", "eps") 
+
+# MCMC settings
+nc <- 3; nt <- 1; ni <- 10000; nb <- 1000
+
+# run the model
+out_mod2c <- jags(mod2c.data, mod2c.inits, mod2c.params, "mod2c.txt", 
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, 
+                 working.directory = getwd()) # took maybe five minutes
+
+saveRDS(out_mod2c, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod2c.rds')
+
+print(out_mod2c, dig = 2)
+
+# notes:
+
+# pv: 5485.4
+# dic: 1313.8
+# rhats: much better, still 2 for b0
+# bp: 0.31
+# see betas below
+
+rows <- rownames(out_mod2c$BUGSoutput$summary)
+print(round(out_mod2c$BUGSoutput$summary[rows, ], 2))
+```
+
+![](images/clipboard-4025546771.png){width="319"}
+
+#### Reasoning for selecting Model 2c:
+
+-   Trouble converging with both summer_mean and winter_mean
+
+-   Summer_mean and winter_mean are collinear so winter_mean effect was getting muddled; makes interpretation less clear
+
+## N-Mixture Model
+
+```{r}
+#| label: Model 3a: N-Mixture Model with no covariates
+
+# Crab[cell, year, season] ~ dbinom(p,N[cell, year])
+# N[cell, year] ~ dpois(lambda)
+
+# Note from when I was originally writing this for 913 final: went in a bit of a circle with chat trying to get a good bp here - i started with a global residual/bp calculation which yielded a bp of zero. chat suggested i specify bp to each cell/year/season, but when that yielded a lot of 1s it told me that was fine and i was overspecifying and should try a global bp. the conclusion seems to be that a poor bp is fine for this iteration since i don't have any parameters on p yet and some of my individual cell/year/season indices' bps aren't one
+
+crab <- matrices[["monthly_crab_abun"]]
+rm(matrices)
+
+sink("mod3a.txt")
+cat("model {
+
+    #### priors ####
+    
+    lambda ~ dunif(0,10)
+    p ~ dunif(0,1)
+    
+    #### likelihood ####
+    
+    for(cell in 1:ncell){
+    
+    for(year in 1:ncol){
+    
+    N[cell,year]  ~ dpois(lambda)
+
+    for(month in 1:12){
+
+    crab_seas[cell, year, month] ~ dbinom(p,N[cell,year]) # observed data
+    
+    crab_draw[cell, year, month] ~ dbinom(p,N[cell,year]) # random data drawn from the model
+    
+    crab_pred[cell, year, month] <- N[cell,year] * p # prediction
+    
+    # freeman-tukey residuals
+    
+    tukey[cell,year,month] <- pow(sqrt(crab_seas[cell,year,month]) - sqrt(crab_pred[cell,year,month]), 2)
+    tukey_draw[cell,year,month] <- pow(sqrt(crab_draw[cell,year,month]) - sqrt(crab_pred[cell,year,month]), 2)
+    
+    } # month loop
+    
+    } # year loop
+    
+    } # cell loop
+    
+    # total crabs
+    total.crabs.everywhere <- sum(N[,])
+    for(year in 1:ncol){total.crabs.year[year] <- sum(N[,year])}
+    
+    # seasonal tukey residual bp
+    tukey_sum <- sum(tukey[,,])
+    tukey_draw_sum <- sum(tukey_draw[,,])
+    bp_indiv <- step(tukey_draw - tukey) # a lot of these are one but chat says that's ok
+    
+    } # end of model  
+",fill = TRUE)
+sink()
+
+# data
+mod3a.data <- list(ncell = dim(crab)[1],
+                  ncol = dim(crab)[2],
+                  crab_seas = crab)
+
+# Initial values
+mod3a.inits <- function(){
+  crab_sum <- apply(crab, c(1,2), sum, na.rm = TRUE)
+  list(N = crab_sum + 1)
+}
+
+# Parameters monitored
+mod3a.params <- c("N","p","lambda",
+                  "total.crabs.everywhere","total.crabs.year",
+                  "bp_indiv") 
+
+# MCMC settings
+nc <- 3; nt <- 1; ni <- 1000; nb <- 100
+
+# run the model
+out_mod3a <- jags(mod3a.data, mod3a.inits, mod3a.params, "mod3a.txt", 
+                 n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, 
+                 working.directory = getwd())
+options(max.print=200000)
+print(out_mod3a, dig = 2)
+
+# code to get specific output from Claude
+rows <- grep("^p$|^lambda$|^total.crabs.everywhere$|^total.crabs.year", 
+             rownames(out_mod3a$BUGSoutput$summary))
+print(round(out_mod3a$BUGSoutput$summary[rows, ], 2))
+
+# notes:
+
+# doesn't run for 10000 iterations
+# bp.indivs very bad, all 1 with n.eff 1
+# dic 4666.5
+# pv 1161.8
+# rhats are good for p, lambda, total.crabs.everywhere
+```
+
+## GRS Plots
+
+```{r}
+#| label: load data back in
+
+# long crab data
+crab.withzeros <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/manometandgbif_coarse_coastal_20260630.rds')
+crab_long <- terra::as.data.frame(crab.withzeros, xy=T, wide=F) %>%
+   rename("longitude" = "x", "latitude" = "y", "year" = "layer", "abun" = "values") %>%
+   mutate(year = as.integer(year)) # takes one minute
+
+# preliminary models
+# out_mod1a <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod1a.rds')
+# BUGS_mod1a <- out_mod1a$BUGSoutput$sims.list
+# rm(out_mod1a)
+# out_mod1b <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod1b.rds')
+# BUGS_mod1b <- out_mod1b$BUGSoutput$sims.list
+# rm(out_mod1b)
+# out_mod1bi <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod1bi.rds')
+# BUGS_mod1bi <- out_mod1bi$BUGSoutput$sims.list
+# rm(out_mod1bi)
+# out_mod1c <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod1c.rds')
+# BUGS_mod1c <- out_mod1c$BUGSoutput$sims.list
+# rm(out_mod1c)
+out_mod2c <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Models/Out/out_mod2c.rds')
+```
+
+```{r}
+#| label: comparing distributions from Poisson types
+
+# removing comparison to zero-inflated because it's so so similar to the overdispersed model
+
+# assemble data - written by Claude
+set.seed(123)  # for reproducibility
+n_sub <- 20000  # adjust based on what your system can handle
+crab_new_a <- sample(as.vector(BUGS_mod1a$crab.new), n_sub)
+#crab_new_b <- sample(as.vector(BUGS_mod1bi$crab.new), n_sub)
+crab_new_c <- sample(as.vector(BUGS_mod1c$crab.new), n_sub)
+rm(BUGS_mod1a, BUGS_mod1bi, BUGS_mod1c)
+
+df <- bind_rows(
+  data.frame(abun = crab_long$abun, source = "Observed"),
+  data.frame(abun = crab_new_a,     source = "Simple Poisson"),
+  #data.frame(abun = crab_new_b,     source = "Zero-inflated"),
+  data.frame(abun = crab_new_c,     source = "Overdispersed")) %>%
+  mutate(source = factor(source, levels = c("Observed","Simple Poisson",
+                                             #"Zero-inflated",
+                                            "Overdispersed")))
+
+densities <- ggplot(df, aes(x = abun, color = source, fill = source)) +
+    geom_density(aes(y = after_stat(density)), 
+                 bw = 0.4, # to smooth things
+                 adjust = 1,
+                 alpha = 0.15, linewidth = 1) +
+    geom_bar(aes(y = after_stat(prop), group = source), 
+           position = "identity", color = NA, alpha=0.5) +
+    scale_x_continuous(limits = c(-0.5, quantile(crab_long$abun, 0.95) + 3),
+                       breaks = 0:10) +
+    scale_color_manual(values = c("Observed" = "#000004", "Simple Poisson" = "#fc8961",
+                                  "Overdispersed" = "#51127c")) +
+    scale_fill_manual(values = c("Observed" = "#000004", "Simple Poisson" = "#fc8961",
+                                 "Overdispersed" = "#51127c")) +
+    labs(x = "Crab abundance", y = "Density", color = NULL, fill = NULL) +
+    theme_classic() + facet_wrap(~source)
+
+ggsave(plot = densities, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Figs/GRS/Response_Distributions.png', width = 6, height = 3, units = "in")
+```
+
+```{r}
+#| label: response curves for 2b
+
+post2c <- as.matrix(out_mod2c$BUGSoutput$sims.matrix) 
+colnames(post2c)
+
+# covariate sequences
+depth_seq <- seq(min(scale(matrices[["depth"]])[,1]), 
+                 max(scale(matrices[["depth"]])[,1]), 
+                 length.out = 1000); depth_mean <- mean(depth_seq)
+winter_seq <- seq(min(scale(matrices[["winter_mean"]])[,1]), 
+                  max(scale(matrices[["winter_mean"]])), 
+                  length.out = 1000); winter_mean <- mean(winter_seq)
+pop_seq <- seq(min(scale(matrices[["pop"]])[,1]), 
+                  max(scale(matrices[["pop"]])[,1]), 
+               length.out = 1000); pop_mean <- mean(pop_seq)
+
+# estimate response to depth
+depth_scaled <- outer(post2c[, "b0"], rep(1, 1000)) +
+        outer(post2c[, "b1"], depth_seq) + 
+        outer(post2c[, "b2"], rep(1, 1000)) * winter_mean +
+        outer(post2c[, "b3"], rep(1, 1000)) * pop_mean
+depth_mu <- exp(depth_scaled)
+# dataframe with uncertainty
+depth_df <- data.frame(
+  x = depth_seq,
+  x_scale = depth_seq * attr(scale(matrices[["depth"]]), 'scaled:scale') +
+                               attr(scale(matrices[["depth"]]), 'scaled:center'),
+  q2.5 = apply(depth_mu, 2, quantile, 0.025),
+  q50  = apply(depth_mu, 2, quantile, 0.5),
+  q97.5= apply(depth_mu, 2, quantile, 0.975),
+  var = "Depth")
+
+# estimate response to winter
+winter_scaled <- outer(post2c[, "b0"], rep(1, 1000)) +
+        outer(post2c[, "b1"], rep(1,1000)) * depth_mean + 
+        outer(post2c[, "b2"], winter_seq) +
+        outer(post2c[, "b3"], rep(1, 1000)) * pop_mean
+winter_mu <- exp(winter_scaled)
+# dataframe with uncertainty
+winter_df <- data.frame(
+  x = winter_seq,
+  x_scale = winter_seq * attr(scale(matrices[["pop"]]), 'scaled:scale') + 
+    attr(scale(matrices[["pop"]]), 'scaled:center'),
+  q2.5 = apply(winter_mu, 2, quantile, 0.025),
+  q50  = apply(winter_mu, 2, quantile, 0.5),
+  q97.5= apply(winter_mu, 2, quantile, 0.975),
+  var = "Mean winter temperature")
+
+# estimate response to pop
+pop_scaled <- outer(post2c[, "b0"], rep(1, 1000)) +
+        outer(post2c[, "b1"], rep(1, 1000)) * depth_mean + 
+        outer(post2c[, "b2"], rep(1, 1000)) * winter_mean +
+        outer(post2c[, "b3"], pop_seq)
+pop_mu <- exp(pop_scaled)
+# dataframe with uncertainty
+pop_df <- data.frame(
+  x = pop_seq,
+  x_scale = attr(scale(matrices[["pop"]]), 'scaled:scale') + 
+    attr(scale(matrices[["pop"]]), 'scaled:center'),
+  q2.5 = apply(pop_mu, 2, quantile, 0.025),
+  q50  = apply(pop_mu, 2, quantile, 0.5),
+  q97.5 = apply(pop_mu, 2, quantile, 0.975),
+  var = "Human population")
+  
+toplot2b <- rbind(depth_df, winter_df, pop_df)
+
+responses <- ggplot(toplot2b, aes(x = x, y = q50)) +
+  geom_ribbon(aes(ymin = q2.5, ymax = q97.5, fill = var), alpha = 0.5) +
+  geom_line(size = 1, aes(color = var)) +
+  facet_wrap(~var, scales = "free") +
+  scale_fill_viridis_d("Covariate", option="D") +
+  scale_color_viridis_d("Covariate", option="D") +
+  #scale_x_continuous(breaks = toplot2b$x, labels = toplot2b$x_scale) +
+  labs(x = "Covariate value (centered and scaled)",
+       y = "Predicted crab abundance") + # this is predicted crabs per ~550km per year
+  theme_classic()
+
+ggsave(plot=responses, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Figs/GRS/Response_Curves.png", width = 8, height = 3)
+
+```
+
+```{r}
+#| label: n mixture plot - needs editing
+
+intervals3a <- as.data.frame(out_mod3a$BUGSoutput$summary[, c("2.5%", "25%", "50%", "75%", "97.5%")])
+
+intervals3a_paramsep <- mutate(intervals3a, param=rownames(intervals3a)) %>%
+  separate(param, into=c("param","index1","index2","index3"))
+
+intervals3a_yearlyn <- intervals3a_paramsep %>% 
+  filter(param == "total", index2 == "year") %>% ## edit for new mod_out
+  mutate(year=c(1970:2026))
+
+intervals3a_lambda <- intervals3a_paramsep %>% 
+  filter(param == "lambda") %>% ## edit for new mod_out
+  group_by(index2) %>% # that's year
+  summarize(lower = mean(as.numeric(`2.5%`)), low = mean(as.numeric(`25%`)),
+            med = mean(as.numeric(`50%`)), high = mean(as.numeric(`75%`)),
+            higher = mean(as.numeric(`97.5%`))) %>%
+  mutate(year=as.numeric(index2)+2000) %>% filter(year != 2026)
+
+real_abun <- crab_dat_transformed %>% group_by(year) %>% summarize(abun=sum(crab_abun)) %>%
+  filter(year != 2026)
+
+# plot code originally from chat
+abuns <- ggplot() +
+  # N
+  # 2.5–97.5% interval (thin, background)
+  geom_linerange(data=intervals3a_yearlyn, aes(ymin = `2.5%`, ymax = `97.5%`, x = year),
+                 size = 0.6, color = "#2c728e") +
+  # 25–75% interval (thicker "box")
+  geom_linerange(data=intervals3a_yearlyn, aes(ymin = `25%`, ymax = `75%`, x = year),
+                 size = 3, color = "#2c728e") +
+  # median (50%)
+  geom_point(data=intervals3a_yearlyn, aes(y = `50%`, x = year, color = "Median estimate\nreal abundance"),
+             size = 2.5) +
+  
+  # lambda
+  # 2.5–97.5% interval (thin, background)
+  geom_linerange(data=intervals3a_lambda, aes(ymin = lower, ymax = higher, x = year),
+                 size = 0.6, color = "#4ac16d") +
+  # 25–75% interval (thicker "box")
+  geom_linerange(data=intervals3a_lambda, aes(ymin = low, ymax = high, x = year),
+                 size = 3, color = "#4ac16d") +
+  # median (50%)
+  #geom_point(data=intervals3a_lambda, aes(y = med, x = year, color = "Median estimate\nobserved abundance\n"), size = 2.5) +
+  
+  # observed abundance (different dataframe)
+  geom_point(data = real_abun,
+             aes(x = year,
+                 y = abun, color = "iNaturalist observed\nabundance\n"),
+             size = 2.5) +
+  
+  # plot params
+  scale_color_manual("Estimates", values=c("Median estimate\nreal abundance" = "#440154",
+                                           "iNaturalist observed\nabundance\n" = "#fde725"
+                                           #,"Median estimate\nobserved abundance\n" = "#21918c"
+                                           )) +
+  labs(x = "Year",
+       y = "Crab Abundance") +
+  theme_classic()
+
+ggsave(plot=abuns, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Figs/mod3a_abun.png", width = 8, height = 4)
+
+```
