@@ -1,0 +1,45 @@
+model {
+
+    #### priors ####
+    
+    lambda ~ dunif(0,10)
+    p ~ dunif(0,1)
+    
+    #### likelihood ####
+    
+    for(cell in 1:ncell){
+    
+    for(year in 1:ncol){
+    
+    N[cell,year]  ~ dpois(lambda)
+
+    for(month in 1:12){
+
+    crab_seas[cell, year, month] ~ dbinom(p,N[cell,year]) # observed data
+    
+    crab_draw[cell, year, month] ~ dbinom(p,N[cell,year]) # random data drawn from the model
+    
+    crab_pred[cell, year, month] <- N[cell,year] * p # prediction
+    
+    # freeman-tukey residuals
+    
+    tukey[cell,year,month] <- pow(sqrt(crab_seas[cell,year,month]) - sqrt(crab_pred[cell,year,month]), 2)
+    tukey_draw[cell,year,month] <- pow(sqrt(crab_draw[cell,year,month]) - sqrt(crab_pred[cell,year,month]), 2)
+    
+    } # month loop
+    
+    } # year loop
+    
+    } # cell loop
+    
+    # total crabs
+    total.crabs.everywhere <- sum(N[,])
+    for(year in 1:ncol){total.crabs.year[year] <- sum(N[,year])}
+    
+    # seasonal tukey residual bp
+    tukey_sum <- sum(tukey[,,])
+    tukey_draw_sum <- sum(tukey_draw[,,])
+    bp_indiv <- step(tukey_draw - tukey) # a lot of these are one but chat says that's ok
+    
+    } # end of model  
+

@@ -1,0 +1,62 @@
+model {
+
+    #### universal prior ####
+    
+    psi ~ dunif(0,1)
+    tau.alpha ~ dgamma(0.01,0.01)
+    tau.beta ~ dgamma(0.01,0.01)
+    mu.lambda ~ dnorm(0,0.01)
+    
+    #### cell-level random effect ####
+    
+    for(i in 1:ncell){
+      alpha[i] ~ dnorm(0, tau.alpha)
+    }
+    
+    #### year-level random effect ####
+    
+    for(year in 1:nyear){
+      beta[year] ~ dnorm(0, tau.beta)
+    }
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year] * z[i,year]) 
+    
+    z[i,year] ~ dbern(psi)
+    
+    log(lambda[i,year]) <- mu.lambda + alpha[i] + beta[year]
+    
+    #### derived parameters ####
+    
+    # calculating the marginal variance
+    mu[i,year]  <- psi * lambda[i,year]
+    v[i,year] <- mu[i,year] + psi * (1 - psi) * lambda[i,year]^2
+
+    # Pearson residual (ZIP-correct) 
+    presid[i,year] <- (crab[i,year] - mu[i,year]) / sqrt(v[i,year])
+    z.new[i,year] ~ dbern(psi)
+    crab.new[i,year] ~ dpois(lambda[i,year] * z.new[i,year])   
+    presid.new[i,year] <- (crab.new[i,year] - mu[i,year]) / sqrt(v[i,year])
+    
+    # square PR's
+    pr2[i,year] <- presid[i,year]^2
+    pr2.new[i,year] <- presid.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+

@@ -1,0 +1,62 @@
+model {
+
+    #### priors ####
+    
+    b0 ~ dnorm(0,1)
+    b1 ~ dnorm(0,1)
+    b2 ~ dnorm(0,1)
+    b3 ~ dnorm(0,1)
+    b4 ~ dnorm(0,1)
+
+    # overdispersed priors
+    tau <- 1/sigma^2
+    sigma ~ dunif(0,10)
+    
+    # indicator variable priors
+    for (i in 1:4){
+    w[i] ~ dbern(0.5)
+    }
+    
+    #### likelihood ####
+    
+    for(i in 1:ncell){
+    
+    for(year in 1:nyear){
+    
+    crab[i,year] ~ dpois(lambda[i,year])
+    
+    log(lambda[i,year]) = b0 + 
+    b1 * depth[i] * w[1] + 
+    b2 * winter_mean[i,year] * w[2] + 
+    b3 * summer_mean[i,year] * w[3] + 
+    b4 * pop[i] * w[4] +
+    eps[i,year]
+    
+    eps[i,year] ~ dnorm(0,tau)
+
+    #### derived parameters ####
+    
+    # model-simulated data
+    crab.new[i,year] ~ dpois(lambda[i,year])
+
+    # Pearson's residuals for both
+    pr[i,year] <- (crab[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    pr.new[i,year] <- (crab.new[i,year] - lambda[i,year])/sqrt(lambda[i,year])
+    
+    # square pr's
+    pr2[i,year] <- pr[i,year]^2
+    pr2.new[i,year] <- pr.new[i,year]^2
+    
+    } # year loop
+    
+    } # i loop
+    
+    # sum pr's
+    d.pr <- sum(pr2)
+    d.pr.new <- sum(pr2.new)
+    
+    # Bayesian p-value
+    bp <- step(d.pr - d.pr.new)
+    
+    } # end of model  
+
