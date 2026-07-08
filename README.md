@@ -13,6 +13,8 @@ Frazer K, Moll R, Bradt G, Dijkstra J, Ogburn M, White E. Modeling blue crab (_C
 
 ### 2. Bibliography
 
+* To fill 7/8/2026
+
 ### 3. Supplementary figures and tables
 
 <img width="510" height="304" alt="Screenshot 2026-07-08 at 1 33 55 PM" src="https://github.com/user-attachments/assets/c1251032-22a1-4c9f-a8c2-a364315c0785" />
