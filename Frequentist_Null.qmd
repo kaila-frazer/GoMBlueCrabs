@@ -11,15 +11,19 @@ editor_options:
 
 Claude chat helped me explore packages available to me and compare null models between packages: <https://claude.ai/share/d8438437-ed0e-4b85-9ab0-8306300d8731>
 
-Another Claude chat giving me shortcuts for accessing intercepts and residuals for the different model types: <https://claude.ai/share/23ec39d3-c255-41af-b354-23e424aa796f>
+Claude chat giving me shortcuts for accessing intercepts and residuals for the different model types: <https://claude.ai/share/23ec39d3-c255-41af-b354-23e424aa796f>
+
+Claude chat suggesting references/leads for choosing between negative binomial type 1 and type 2 null models: <https://pubmed.ncbi.nlm.nih.gov/18051645/>
 
 #### References:
-
-Zuur et al. 2009 for a review of zero-inflation types and model selection inspiration.
 
 Bolker 2020 for more in depth review of glmmTMB.
 
 Sutherland et al. 2023 for a more in-depth understanding of AIC for model selection.
+
+Ver Hoef and Boveng 2007 for ecological example of how choices between negative binomial type 1 and type 2 distributions will affect covariate weights down the line
+
+Zuur et al. 2009 for a review of zero-inflation types and model selection inspiration.
 
 ## Packages & Data:
 
@@ -27,7 +31,7 @@ Sutherland et al. 2023 for a more in-depth understanding of AIC for model select
 #| label: libraries
 
 library(pacman)
-p_load(dplyr, tidyverse, glue, mgcv, gamlss, glmmTMB, DHARMa)
+p_load(dplyr, tidyverse, glue, mgcv, gamlss, glmmTMB, DHARMa, ggplot2)
 ```
 
 ```{r}
@@ -358,18 +362,13 @@ tmb_nb1zi_stats <- glmmtmb_stats(tmb_nb1zi, "NB Type I with ZI TMB")
 tmb_nb2zi_stats <- glmmtmb_stats(tmb_nb2zi, "NB Type II with ZI TMB")
 tmb_pzi_stats <- glmmtmb_stats(tmb_pzi, "Poisson with ZI TMB")
 tmb_nb1offzi_stats <- glmmtmb_stats(tmb_nb1offzi, "NB Type I with ZI and Offset TMB")
-tmb_nb1ziproc_stats <- glmmtmb_stats(tmb_nb1ziproc, "NB Type I with ZI Process TMB")
-tmb_nb2ziproc_stats <- glmmtmb_stats(tmb_nb2ziproc, "NB Type II with ZI Process TMB")
-tmb_pziproc_stats <- glmmtmb_stats(tmb_pziproc, "Poisson with ZI Process TMB")
 tmb_nb1ziprocpop_stats <- glmmtmb_stats(tmb_nb1ziprocpop, "NB Type I with ZI Population Process TMB")
 tmb_nb2ziprocpop_stats <- glmmtmb_stats(tmb_nb2ziprocpop, "NB Type II with ZI Population Process TMB")
 tmb_pziprocpop_stats <- glmmtmb_stats(tmb_pziprocpop, "Poisson with ZI Population Process TMB")
 tmb_nb1ziproclat_stats <- glmmtmb_stats(tmb_nb1ziproclat, "NB Type I with ZI Latitutde Process TMB")
 tmb_nb2ziproclat_stats <- glmmtmb_stats(tmb_nb2ziproclat, "NB Type II with ZI Latitude Process TMB")
-tmb_pziproclat_stats <- glmmtmb_stats(tmb_pziproclat, "Poisson with ZI Latitude Process TMB")
 tmb_nb1ziproccell_stats <- glmmtmb_stats(tmb_nb1ziproccell, "NB Type I with ZI Cell Process TMB")
 tmb_nb2ziproccell_stats <- glmmtmb_stats(tmb_nb2ziproccell, "NB Type II with ZI Cell Process TMB")
-tmb_pziproccell_stats <- glmmtmb_stats(tmb_pziproccell, "Poisson with ZI Cell Process TMB")
 tmb_nb1ziprocdep_stats <- glmmtmb_stats(tmb_nb1ziprocdep, "NB Type I with ZI Depth Process TMB")
 tmb_nb2ziprocdep_stats <- glmmtmb_stats(tmb_nb2ziprocdep, "NB Type I with ZI Depth Process TMB")
 tmb_nb1ziprocdeppop_stats <- glmmtmb_stats(tmb_nb1ziprocdeppop, "NB Type I with ZI Depth + Population Process TMB")
@@ -379,7 +378,7 @@ tmb_nb2ziprocdeplat_stats <- glmmtmb_stats(tmb_nb2ziprocdeplat, "NB Type II with
 tmb_nb1ziprocpoplat_stats <- glmmtmb_stats(tmb_nb1ziprocpoplat, "NB Type I with ZI Pop + Latitude Process TMB")
 tmb_nb2ziprocpoplat_stats <- glmmtmb_stats(tmb_nb2ziprocpoplat, "NB Type II with ZI Pop + Latitude Process TMB")
 
-AIC(tmb_nb1, tmb_nb2, tmb_p, tmb_nb1zi, tmb_nb2zi, tmb_pzi, tmb_nb1offzi, tmb_nb1ziproc, tmb_nb2ziproc, tmb_pziproc, tmb_nb1ziprocpop, tmb_nb2ziprocpop, tmb_pziprocpop, tmb_nb1ziproclat, tmb_nb2ziproclat, tmb_pziproclat, tmb_nb1ziproccell, tmb_nb2ziproccell, tmb_pziproccell, tmb_nb1ziprocdep, tmb_nb2ziprocdep, tmb_nb1ziprocdeppop, tmb_nb2ziprocdeppop, tmb_nb1ziprocdeplat, tmb_nb2ziprocdeplat, tmb_nb1ziprocpoplat, tmb_nb2ziprocpoplat) # just for fun, how's it going? ones with an explicit zi process, either without covariates or with a population parameter, are best
+AIC(tmb_nb1, tmb_nb2, tmb_p, tmb_nb1zi, tmb_nb2zi, tmb_pzi, tmb_nb1offzi, tmb_nb1ziprocpop, tmb_nb2ziprocpop, tmb_pziprocpop, tmb_nb1ziproclat, tmb_nb2ziproclat,  tmb_nb1ziproccell, tmb_nb2ziproccell, tmb_nb1ziprocdep, tmb_nb2ziprocdep, tmb_nb1ziprocdeppop, tmb_nb2ziprocdeppop, tmb_nb1ziprocdeplat, tmb_nb2ziprocdeplat, tmb_nb1ziprocpoplat, tmb_nb2ziprocpoplat) # just for fun, how's it going? ones with an explicit zi process, either without covariates or with a population parameter, are best
 ```
 
 ```{r}
@@ -387,7 +386,7 @@ AIC(tmb_nb1, tmb_nb2, tmb_p, tmb_nb1zi, tmb_nb2zi, tmb_pzi, tmb_nb1offzi, tmb_nb
 
 stats_full <- rbind(gam_nb_stats, gam_nboff_stats, 
       gamlss_nbii_stats, gamlss_pig_stats, gamlss_nbiioff_stats, gamlss_pigoff_stats, gamlss_nbiiziproc_stats, gamlss_pigziproc_stats, gamlss_zanbiziproc_stats, gamlss_nbiiziprocpop_stats, gamlss_pigziprocpop_stats, gamlss_zanbiziprocpop_stats,gamlss_nbiiziproclat_stats, gamlss_pigziproclat_stats, gamlss_zanbiziproclat_stats,gamlss_nbiiziproccell_stats,
-      tmb_nb1_stats, tmb_nb2_stats, tmb_p_stats, tmb_nb1zi_stats, tmb_nb2zi_stats, tmb_pzi_stats, tmb_nb1offzi_stats, tmb_nb1ziproc_stats, tmb_nb2ziproc_stats, tmb_pziproc_stats, tmb_nb1ziprocpop_stats, tmb_nb2ziprocpop_stats, tmb_pziprocpop_stats, tmb_nb1ziproclat_stats, tmb_nb2ziproclat_stats, tmb_pziproclat_stats, tmb_nb1ziproccell_stats, tmb_nb2ziproccell_stats, tmb_pziproccell_stats, tmb_nb1ziprocdep_stats, tmb_nb2ziprocdep_stats, tmb_nb1ziprocdeppop_stats, tmb_nb2ziprocdeppop_stats, tmb_nb1ziprocdeplat_stats, tmb_nb2ziprocdeplat_stats, tmb_nb1ziprocpoplat_stats, tmb_nb2ziprocpoplat_stats)
+      tmb_nb1_stats, tmb_nb2_stats, tmb_p_stats, tmb_nb1zi_stats, tmb_nb2zi_stats, tmb_pzi_stats, tmb_nb1offzi_stats, tmb_nb1ziprocpop_stats, tmb_nb2ziprocpop_stats, tmb_pziprocpop_stats, tmb_nb1ziproclat_stats, tmb_nb2ziproclat_stats, tmb_nb1ziproccell_stats, tmb_nb2ziproccell_stats, tmb_nb1ziprocdep_stats, tmb_nb2ziprocdep_stats, tmb_nb1ziprocdeppop_stats, tmb_nb2ziprocdeppop_stats, tmb_nb1ziprocdeplat_stats, tmb_nb2ziprocdeplat_stats, tmb_nb1ziprocpoplat_stats, tmb_nb2ziprocpoplat_stats)
 ```
 
 #### Decision process:
@@ -408,7 +407,7 @@ stats_topmodels <- stats_full %>%
   filter(sRMSE <= 0, sMAE <= 0) %>% # step 3
   filter(sAIC <= 0, sBIC <= 0) # step 4
   
-# this leaves us with 14 top models, all glmmTMB variations on including an explicit model for the zero-inflation process
+# this leaves us with 11 top models, all glmmTMB variations on including an explicit model for the zero-inflation process
 # clear top two models by AIC and BIC units are the two negative binomial models (type I and type II are tied) including both population and latitude in the model for the zero-inflation process. this makes intuitive sense!
 ```
 
@@ -418,4 +417,48 @@ stats_topmodels <- stats_full %>%
 # two models look very, very similar in the DHARMa residuals. Type I has a slightly higher p-value (0.45) for the KS test (Type II's is 0.35), but I don't think this justifies the decision
 plot(simulateResiduals(tmb_nb1ziprocpoplat))
 plot(simulateResiduals(tmb_nb2ziprocpoplat))
+
+# is something going on with sigma to make these two so similar?
+sigma(tmb_nb1ziprocpoplat)
+sigma(tmb_nb2ziprocpoplat)
+# these are very different estimates, but for nb1 sigma of ~10 means the equation reads 11mu and for nb2 sigma of ~0.05 means the equation reads mu + small_number
+
+## code to recreate Ver Hoef and Boveng 2007 by Claude:
+
+set.seed(2) # for reproducibility
+subsample_size <- 40 # idk i thought this would incorporate at least some crab obs per sample
+n_subsamples <- 158 # take up all the data
+
+boot_stats <- replicate(n_subsamples, { # function by Claude
+  samp <- sample(data$count, size = subsample_size, replace = TRUE)
+  c(mean = mean(samp), var = var(samp))
+}) %>% t() %>% as.data.frame()
+
+# get a range of mean values for the x axis
+mu_seq <- seq(min(boot_stats$mean), max(boot_stats$mean), length.out = 100)
+
+# extract overdispersion parameters from the two different models
+phi1 <- sigma(tmb_nb1ziprocpoplat)  # NB1: var = mu*(1+phi)
+phi2 <- sigma(tmb_nb2ziprocpoplat)  # NB2: var = mu + mu^2/phi
+
+# build lines along the defined mu_seq x-axis using equations for the models given phi s
+nb1_line <- data.frame(mu = mu_seq, var = mu_seq * (1 + phi1), type = "NB1")
+nb2_line <- data.frame(mu = mu_seq, var = mu_seq + mu_seq^2 / phi2, type = "NB2")
+
+# tried setting seed to 1, 2, 3, 4, and 5 and all looked like a quadratic residual fit was a little better
+ggplot(boot_stats, aes(mean, var)) +
+  geom_point(alpha = 0.4) +
+  geom_line(data = nb1_line, aes(mu, var, color = type)) +
+  geom_line(data = nb2_line, aes(mu, var, color = type)) +
+  # scale_x_log10() + scale_y_log10() + # keeping these in makes the pattern very clear, but the lines look more linear and frankly less cute, and you can tell that nb2 is the right choice even without scaling
+  labs(x = "Mean", y = "Variance", color = "Model") +
+  theme_minimal()
+
+# yay! this exercise makes it clear that nb2 fits my data better; my variance increases quadratically with my mean. yes. hoorah.
 ```
+
+# and the null model is...
+
+null \<- glmmTMB(count \~ 1, ziformula = \~ pop + latitude, family = nbinom2(), data = data)
+
+go forth and have covariate babies!!
