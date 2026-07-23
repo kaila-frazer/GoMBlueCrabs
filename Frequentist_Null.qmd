@@ -1,0 +1,421 @@
+---
+title: "GAM_Modeling"
+author: "Kai Frazer"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+#### AI disclosure:
+
+Claude chat helped me explore packages available to me and compare null models between packages: <https://claude.ai/share/d8438437-ed0e-4b85-9ab0-8306300d8731>
+
+Another Claude chat giving me shortcuts for accessing intercepts and residuals for the different model types: <https://claude.ai/share/23ec39d3-c255-41af-b354-23e424aa796f>
+
+#### References:
+
+Zuur et al. 2009 for a review of zero-inflation types and model selection inspiration.
+
+Bolker 2020 for more in depth review of glmmTMB.
+
+Sutherland et al. 2023 for a more in-depth understanding of AIC for model selection.
+
+## Packages & Data:
+
+```{r}
+#| label: libraries
+
+library(pacman)
+p_load(dplyr, tidyverse, glue, mgcv, gamlss, glmmTMB, DHARMa)
+```
+
+```{r}
+#| label: data
+
+matrices <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GoMBlueCrabs/ModelReadyData/modelready_matrices.rds')
+
+# extract data i want
+crab <- matrices[["crab_abun"]]
+points <- matrices[["points"]]
+depth <- matrices[["depth"]]
+winter_mean <- matrices[["winter_mean"]]
+summer_mean <- matrices[["summer_mean"]]
+pop <- matrices[["pop"]]
+
+# function to translate datat to long form
+make.long <- function(wide, flatornot, colname) {
+  
+  if (flatornot == "not") { # for timev varying data
+    long <- as.data.frame(wide) %>% mutate(cell_id = rownames(wide)) %>%
+      pivot_longer(-cell_id, names_to = "year", values_to = colname)}
+  
+  if (flatornot == "flat") { # for static data
+    long <- as.data.frame(wide)
+    long <- mutate(long, cell_id = rownames(long))}
+  
+  return(long)
+}
+
+# make everything long
+crab_long <- make.long(crab, "not", "count")
+points_long <- make.long(points, "flat", "")
+depth_long <- make.long(depth, "flat", "")
+winter_mean_long <- make.long(winter_mean, "not", "winter_mean")
+summer_mean_long <- make.long(summer_mean, "not", "summer_mean")
+pop_long <- make.long(pop, "flat", "")
+
+# join data
+data <- crab_long %>%
+  left_join(points_long, by = "cell_id") %>%
+  left_join(depth_long, by = "cell_id") %>% rename("depth" = "wide") %>%
+  left_join(winter_mean_long, by = c("cell_id", "year")) %>%
+  left_join(summer_mean_long, by = c("cell_id", "year")) %>%
+  left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
+```
+
+## Modeling
+
+#### Process outline:
+
+1.  Try several possible distributions for the null model among three different packages (starting with mgcv from my experience, then gamlss and glmmTMB packages on Claude's recommendation). Tried negative binomial and zero-inflated models available for each package because my previous Bayesian modeling showed me that these were the appropriate types of distributions for my data
+2.  For each possible null model, plot Q-Q and Residual vs. Fitted plots and discard models that look immediately off
+3.  For models that look okay, I collated useful table of stats, including: AIC and BIC, Pearson and Spearman coefficients, RMSE and MAE, the intercept and slope, and degrees of freedom. For null models that would accept random effects, offsets, or zero-inflation process models, I added those to test additional null configurations
+4.  Select best null model from the table collated in 3.
+
+```{r}
+#| label: trying mgcv distributions
+
+## simplest null models - # tried nb(), ziP(), poisson, ziplss() took too long
+gam_nb <- gam(count ~ 1, data = data, family = nb(), method = "REML")
+gam.check(gam_nb) # qq looks s-like but not too bad, response v. pred only has one fitted value but i think that's okay
+# gam_zip <- gam(count ~ 1, data = data, family = ziP(), method = "REML")
+# gam.check(gam_zip) # qq is binned with a long tail, reject
+# gam_p <- gam(count ~ 1, data = data, family = poisson, method = "REML")
+# gam.check(gam_p) # qq is binned with a long tail, reject
+# gam_ziplss <- gam(count ~ 1, data = data, family = ziplss(), method = "REML")
+# gam.check(gam_ziplss) # took >5min, reject
+
+## null models with offset
+gam_nboff <- gam(count ~ offset(log(pop)), data = data, family = nb(), method = "REML")
+gam.check(gam_nboff) # qq has a long tail and resid vs linear pred has a strong streak around zero, suspicious
+
+## save info for possible models
+gam_nb_stats <- data.frame("Model" = "NB GAM", "Intercept" = as.numeric(gam_nb[[1]]),
+                    "Pearson" = cor(gam_nb$y,fitted(gam_nb),method="pearson"),
+                    "Spearman" = cor(gam_nb$y,fitted(gam_nb),method="spearman"),
+                    "RMSE" = sqrt(mean(residuals(gam_nb,type="response")^2)),
+                    "MAE" = mean(abs(residuals(gam_nb,type="response"))),
+                    "AIC" = AIC(gam_nb), "BIC" = BIC(gam_nb),
+                    "log_link" = gam_nb$family$link, "df" = sum(gam_nb$edf),
+                    "Package" = "mgcv")
+# couldn't extract pearson and spearman because SD was zero ^
+gam_nboff_stats <- data.frame("Model" = "NB GAM with Offset", 
+                    "Intercept" = as.numeric(gam_nboff[[1]]),
+                    "Pearson" = cor(gam_nboff$y,fitted(gam_nboff),method="pearson"),
+                    "Spearman" = cor(gam_nboff$y,fitted(gam_nboff),method="spearman"),
+                    "RMSE" = sqrt(mean(residuals(gam_nboff,type="response")^2)),
+                    "MAE" = mean(abs(residuals(gam_nboff,type="response"))),
+                    "AIC" = AIC(gam_nboff), "BIC" = BIC(gam_nboff),
+                    "log_link" = gam_nboff$family$link, "df" = sum(gam_nboff$edf), 
+                    "Package" = "mgcv")
+```
+
+```{r}
+#| label: trying gamlss distributions
+
+## simplest null models
+gamlss_nbii <- gamlss(count ~ 1, family = NBII, data = data)
+plot(gamlss_nbii) # looks great
+gamlss_pig  <- gamlss(count ~ 1, family = PIG,  data = data)
+plot(gamlss_pig) # still quite good, q-q plot deviates a bit more at tails
+# gamlss_zinbi <- gamlss(count ~ 1, family = ZINBI, data = data)
+# plot(gamlss_zinbi) # flat end of q-q plot, reject
+gamlss_zanbi <- gamlss(count ~ 1, family = ZANBI, data = data)
+plot(gamlss_zanbi) # looks okay
+
+## with zero-inflated process
+gamlss_nbiiziproc <- gamlss(count~1,sigma.formula=~1,nu.formula=~1,family = NBII,data = data)
+plot(gamlss_nbiiziproc) # okay
+gamlss_pigziproc <- gamlss(count ~ 1,sigma.formula = ~ 1,nu.formula=~1,family=PIG,data = data)
+plot(gamlss_pigziproc) # okay
+gamlss_zanbiziproc <- gamlss(count~1,sigma.formula =~1,nu.formula=~1,family=ZANBI,data= data)
+plot(gamlss_zanbiziproc) # okay
+
+## with pop covariate on zero-inflated process
+gamlss_nbiiziprocpop<-gamlss(count~1,sigma.formula=~1,nu.formula=~pop,family=NBII,data = data)
+plot(gamlss_nbiiziprocpop) # okay
+gamlss_pigziprocpop <- gamlss(count~1,sigma.formula=~1,nu.formula=~pop,family=PIG,data= data)
+plot(gamlss_pigziprocpop) # okay
+gamlss_zanbiziprocpop<-gamlss(count~1,sigma.formula=~1,nu.formula=~pop,family=ZANBI,data=data)
+plot(gamlss_zanbiziprocpop) # okay
+
+## with lat covariate on zero-inflated process
+gamlss_nbiiziproclat<-gamlss(count~1,sigma.formula=~1,nu.formula=~latitude,family=NBII,data= data)
+plot(gamlss_nbiiziproclat) # okay
+gamlss_pigziproclat <- gamlss(count~1,sigma.formula=~1,nu.formula=~latitude,family=PIG,data= data)
+plot(gamlss_pigziproclat) # okay
+gamlss_zanbiziproclat<-gamlss(count~1,sigma.formula=~1,nu.formula=~latitude,family=ZANBI,data=data)
+plot(gamlss_zanbiziproclat) # okay
+
+## with cell covariate on zero-inflated process
+gamlss_nbiiziproccell<-gamlss(count~1,sigma.formula=~1,nu.formula=~cell_id,family=NBII,data = data)
+plot(gamlss_nbiiziproccell) # okay
+# gamlss_pigziproccell <- gamlss(count~1,sigma.formula=~1,nu.formula=~cell_id,family=PIG,data= data)
+# plot(gamlss_pigziproccell) # qq plot looks off compared to others, reject
+# gamlss_zanbiziproccell<-gamlss(count~1,sigma.formula=~1,nu.formula=~cell_id,family=ZANBI,data=data)
+# plot(gamlss_zanbiziproccell) # qq plot looks quite off, reject
+
+## with offsets
+gamlss_nbiioff <- gamlss(count ~ offset(log(pop)), family = NBII, data = data)
+plot(gamlss_nbiioff) # looks good
+gamlss_pigoff  <- gamlss(count ~ offset(log(pop)), family = PIG,  data = data)
+plot(gamlss_pigoff) # looks good
+# gamlss_zanbioff <- gamlss(count ~ offset(log(pop)), family = ZANBI, data = data)
+# plot(gamlss_zanbioff) # can't plot q-q, i'm not sure why, probably a reason to reject?!
+
+## with offsets and zero-inflated process, covariates or no, had flyaway qq plots or warnings/errors for poisson
+# gamlss_nbiiziprocoff <- gamlss(count~offset(log(pop)),sigma.formula=~1,nu.formula=~1,family = NBII,data = data)
+# plot(gamlss_nbiiziprocoff) # qq plot  flies away, reject
+# gamlss_pigziprocoff <- gamlss(count ~ offset(log(pop)),sigma.formula = ~ 1,nu.formula=~1,family=PIG,data = data)
+# plot(gamlss_pigziprocoff) # qq plot flies away, reject
+# gamlss_zanbiziprocoff <- gamlss(count~offset(log(pop)),sigma.formula =~1,nu.formula=~1,family=ZANBI,data= data) # warning
+# plot(gamlss_zanbiziprocoff) # error missing values, reject
+## with offsets and lat covariate on zero-inflated process
+# gamlss_nbiiziproclatoff <- gamlss(count~offset(log(pop)),sigma.formula=~1,nu.formula=~latitude,family = NBII,data = data)
+# plot(gamlss_nbiiziproclatoff) # qq plot  flies away, reject
+# gamlss_pigziproclatoff <- gamlss(count ~ offset(log(pop)),sigma.formula = ~ 1,nu.formula=~latitude,family=PIG,data = data)
+# plot(gamlss_pigziproclatoff) # qq plot flies away, reject
+# gamlss_zanbiziproclatoff <- gamlss(count~offset(log(pop)),sigma.formula =~1,nu.formula=~latitude,family=ZANBI,data= data) # warning
+# plot(gamlss_zanbiziproclatoff) # error missing values, reject
+## with offsets and lat covariate on zero-inflated process
+# gamlss_nbiiziproccelloff <- gamlss(count~offset(log(pop)),sigma.formula=~1,nu.formula=~cell_id,family = NBII,data = data)
+# plot(gamlss_nbiiziproccelloff) # qq plot  flies away, reject
+# gamlss_pigziproccelloff <- gamlss(count ~ offset(log(pop)),sigma.formula = ~ 1,nu.formula=~cell_id,family=PIG,data = data)
+# plot(gamlss_pigziproccelloff) # qq plot flies away, reject
+# gamlss_zanbiziproccelloff <- gamlss(count~offset(log(pop)),sigma.formula =~1,nu.formula=~cell_id,family=ZANBI,data= data) # warning
+# plot(gamlss_zanbiziproccelloff) # error missing values, reject
+
+## saving stats for possible models
+# function cuz there's a lot of them
+gamlss_stats <- function(model, mod_string) {
+  stats <- data.frame("Model" = mod_string, 
+                    "Intercept" = as.numeric(coef(model)[1]),
+                    "Pearson" = cor(model$y,fitted(model),method="pearson"),
+                    "Spearman" = cor(model$y,fitted(model),method="spearman"),
+                    "RMSE" = sqrt(mean((model$y - fitted(model))^2)),
+                    "MAE" = mean(abs(model$y - fitted(model))),
+                    "AIC" = AIC(model), "BIC" = BIC(model),
+                    "log_link" = model$mu.link, "df" = model$df.fit,
+                    "Package" = "gamlss")
+  return(stats)}
+# generating stats
+gamlss_nbii_stats <- gamlss_stats(gamlss_nbii, "NB Type II GAM")
+gamlss_pig_stats <- gamlss_stats(gamlss_pig, "Poisson Inverse Gamma GAM")
+gamlss_nbiioff_stats <- gamlss_stats(gamlss_nbiioff, "NB Type II GAM with Offset GAM")
+gamlss_pigoff_stats <- gamlss_stats(gamlss_pigoff, "Poisson Inverse Gamma with Offset GAM")
+gamlss_nbiiziproc_stats <- gamlss_stats(gamlss_nbiiziproc, "NB Type II with ZI GAM")
+gamlss_pigziproc_stats <- gamlss_stats(gamlss_pigziproc, "Poisson Inverse Gamma with ZI GAM")
+gamlss_zanbiziproc_stats <- gamlss_stats(gamlss_zanbiziproc, "Zero-altered with ZI GAM")
+gamlss_nbiiziprocpop_stats <- gamlss_stats(gamlss_nbiiziprocpop, "NB Type II with ZI Population Process GAM")
+gamlss_pigziprocpop_stats <- gamlss_stats(gamlss_pigziprocpop, "Poisson Inverse Gamma with ZI Population Process GAM")
+gamlss_zanbiziprocpop_stats <- gamlss_stats(gamlss_zanbiziprocpop, "Zero-altered with ZI Population Process GAM")
+gamlss_nbiiziproclat_stats <- gamlss_stats(gamlss_nbiiziproclat, "NB Type II with ZI Latitude Process GAM")
+gamlss_pigziproclat_stats <- gamlss_stats(gamlss_pigziproclat, "Poisson Inverse Gamma with ZI Latitude Process GAM")
+gamlss_zanbiziproclat_stats <- gamlss_stats(gamlss_zanbiziproclat, "Zero-alterned with ZI Latitude Process GAM")
+gamlss_nbiiziproccell_stats <- gamlss_stats(gamlss_nbiiziproccell, "NB Type II with ZI Cell Process GAM")
+
+GAIC(gamlss_nbii, gamlss_pig, gamlss_nbiioff, gamlss_pigoff, gamlss_nbiiziproc, gamlss_pigziproc, gamlss_zanbiziproc, gamlss_nbiiziprocpop, gamlss_pigziprocpop, gamlss_zanbiziprocpop,gamlss_nbiiziproclat, gamlss_pigziproclat, gamlss_zanbiziproclat,gamlss_nbiiziproccell)  # just for fun, how's the competition going? yes, the models with offsets do significantly better in aic!
+```
+
+```{r}
+#| label: trying glmmTMB
+
+# going to try all distributions for all types of null models here because i know from playing around that adding offsets and zero-iflated processes explicitly helps performance a lot for some of these
+
+## simplest null models
+tmb_nb1 <- glmmTMB(count ~ 1, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1)) # no flags
+tmb_nb2 <- glmmTMB(count ~ 1, family = nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2)) # no flags
+tmb_p <- glmmTMB(count ~ 1, family = genpois(), data = data)
+plot(simulateResiduals(tmb_p)) # no flags
+# tmb_c <- glmmTMB(count ~ 1, family = compois(), data = data)
+# plot(simulateResiduals(tmb_c)) # crashed R twice, reject
+# tmb_t <- glmmTMB(count ~ 1, family = tweedie(), data = data)
+# plot(simulateResiduals(tmb_t)) # fails dispersion test, reject
+
+## null models with offsets
+# tmb_nb1off <- glmmTMB(count ~ offset(log(pop)), family = nbinom1(), data = data)
+# plot(simulateResiduals(tmb_nb1off)) # outlier test failed, quantile deviations detected, fail
+# tmb_nb2off <- glmmTMB(count ~ offset(log(pop)), family = nbinom2(), data = data)
+# plot(simulateResiduals(tmb_nb2off)) # dispersion test fail, reject
+# tmb_poff <- glmmTMB(count ~ offset(log(pop)), family = genpois(), data = data)
+# plot(simulateResiduals(tmb_poff)) # dispersion test fail, quantile deviation detected, reject
+
+## null models with a zero-inflated process
+tmb_nb1zi <- glmmTMB(count ~ 1, ziformula = ~1, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1zi)) # okay
+tmb_nb2zi <- glmmTMB(count ~ 1, ziformula = ~1, family = nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2zi)) # okay
+tmb_pzi <- glmmTMB(count ~ 1, ziformula = ~1, family = genpois(), data = data)
+plot(simulateResiduals(tmb_pzi)) # okay
+
+## null models with pop covariate on zero-inflated process
+tmb_nb1ziprocpop <- glmmTMB(count ~ 1,  ziformula = ~ pop, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1ziprocpop)) # okay
+tmb_nb2ziprocpop <- glmmTMB(count ~ 1,  ziformula = ~ pop, family = nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2ziprocpop)) # okay
+tmb_pziprocpop <- glmmTMB(count ~ 1,  ziformula = ~ pop, family = genpois(), data = data)
+plot(simulateResiduals(tmb_pziprocpop)) # okay
+
+## null models with depth covariate on zero-inflated process
+tmb_nb1ziprocdep <- glmmTMB(count ~ 1,  ziformula = ~ depth, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1ziprocdep)) # okay
+tmb_nb2ziprocdep <- glmmTMB(count ~ 1,  ziformula = ~ depth, family = nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2ziprocdep)) # okay
+# tmb_pziprocdep <- glmmTMB(count ~ 1,  ziformula = ~ depth, family = genpois(), data = data)
+# plot(simulateResiduals(tmb_pziprocdep)) # quantile deviations detected, reject
+
+## null models with depth and population interaction covariate on zero-inflated process - note that i got a convergence problem when i multipled the two but better AIC when I added
+tmb_nb1ziprocdeppop <- glmmTMB(count ~ 1,  ziformula = ~ depth+pop, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1ziprocdeppop)) # okay
+tmb_nb2ziprocdeppop <- glmmTMB(count ~ 1,  ziformula = ~ depth+pop, family = nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2ziprocdeppop)) # okay
+
+## null models with depth and latitude interaction covariate on zero-inflated process
+tmb_nb1ziprocdeplat <- glmmTMB(count ~ 1,  ziformula = ~ depth+latitude, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1ziprocdeplat)) # okay
+tmb_nb2ziprocdeplat <- glmmTMB(count ~ 1,  ziformula = ~ depth+latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2ziprocdeplat)) # okay
+
+## null models with pop and latitude interaction covariate on zero-inflated process
+tmb_nb1ziprocpoplat <- glmmTMB(count ~ 1,  ziformula = ~ pop+latitude, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1ziprocpoplat)) # okay
+tmb_nb2ziprocpoplat <- glmmTMB(count ~ 1,  ziformula = ~ pop+latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2ziprocpoplat)) # okay
+
+## null models with latitude covariate on zero-inflated process
+tmb_nb1ziproclat <- glmmTMB(count ~ 1,ziformula = ~ latitude, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1ziproclat)) # okay
+tmb_nb2ziproclat <- glmmTMB(count ~ 1,  ziformula =~latitude,family=nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2ziproclat)) # okay
+# tmb_pziproclat <- glmmTMB(count~ 1,ziformula = ~ latitude, family = genpois(), data = data)
+# plot(simulateResiduals(tmb_pziproclat)) # quantile deviations detected, reject
+
+## null models with cellid covariate on zero-inflated process
+tmb_nb1ziproccell <- glmmTMB(count ~ 1,ziformula = ~ cell_id, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1ziproccell)) # okay
+tmb_nb2ziproccell <- glmmTMB(count ~ 1,  ziformula =~cell_id,family=nbinom2(), data = data)
+plot(simulateResiduals(tmb_nb2ziproccell)) # okay
+# tmb_pziproccell <- glmmTMB(count ~ 1,  ziformula = ~ cell_id, family = genpois(), data = data) # model convergence problem, reject
+
+## null models with offsets and zero-inflated processes sans-covariates
+tmb_nb1offzi <- glmmTMB(count~offset(log(pop)), ziformula=~1, family = nbinom1(), data = data)
+plot(simulateResiduals(tmb_nb1offzi)) # okay
+# tmb_nb2offzi <-glmmTMB(count~offset(log(pop)), ziformula=~1, family = nbinom2(),data = data)
+# plot(simulateResiduals(tmb_nb2offzi)) # dispersion test failed, reject
+# tmb_poffzi <-glmmTMB(count ~ offset(log(pop)),ziformula = ~1,family = genpois(),data = data)
+# plot(simulateResiduals(tmb_poffzi)) # outlier test failed, reject
+
+## null models with offsets and covariates on zero-inflated process had trouble converging; threw non-positive-definitive Hessian matrix errors
+# ## null models with offsets and zero-inflated process with cellid covariate
+# tmb_nb1ziproccelloff <- glmmTMB(count ~ offset(scale(pop)),
+#                              ziformula = ~ cell_id, family = nbinom1(), data = data)
+# tmb_nb2ziproccelloff <- glmmTMB(count ~ offset(log(pop)),
+#                                 ziformula =~cell_id,family=nbinom2(), data = data)
+# ## null models with offsets and zero-inflated process with lat covariate
+# tmb_nb1ziproclatoff <- glmmTMB(count~offset(scale(pop)),
+#                                ziformula=~latitude,family=nbinom1(),data=data)
+# plot(simulateResiduals(tmb_nb1ziproclatoff))
+# tmb_nb2ziproclatoff <- glmmTMB(count ~ offset(scale(pop)),  
+#                                ziformula =~latitude,family=nbinom2(), data = data)
+# plot(simulateResiduals(tmb_nb2ziproclatoff))
+
+## hurdle model
+# tmb_hurdleoffzi <- glmmTMB(count ~ offset(log(pop)), ziformula = ~1,
+#                            family = truncated_nbinom2(), data = data)
+# plot(simulateResiduals(tmb_hurdleoffzi)) # quantile deviations detected, reject
+
+## saving stats for possible models
+# function cuz there's a lot of them
+glmmtmb_stats <- function(model, mod_string) {
+  stats <- data.frame("Model" = mod_string, 
+                    "Intercept" = as.numeric(fixef(model)$cond[1]),
+                    "Pearson" = cor(model.frame(model)[[1]],fitted(model),method="pearson"),
+                    "Spearman" = cor(model.frame(model)[[1]],fitted(model),method="spearman"),
+                    "RMSE" = sqrt(mean(residuals (model, type = "response")^2)),
+                    "MAE" = mean(abs(residuals(model, type = "response"))),
+                    "AIC" = AIC(model), "BIC" = BIC(model),
+                    "log_link" = family(model)$link, "df" = attr(logLik(model), "df"),
+                    "Package" = "glmmTMB")
+  return(stats)}
+# generating stats
+tmb_nb1_stats <- glmmtmb_stats(tmb_nb1, "NB Type I TMB")
+tmb_nb2_stats <- glmmtmb_stats(tmb_nb2, "NB Type II TMB")
+tmb_p_stats <- glmmtmb_stats(tmb_p, "Poisson TMB")
+tmb_nb1zi_stats <- glmmtmb_stats(tmb_nb1zi, "NB Type I with ZI TMB")
+tmb_nb2zi_stats <- glmmtmb_stats(tmb_nb2zi, "NB Type II with ZI TMB")
+tmb_pzi_stats <- glmmtmb_stats(tmb_pzi, "Poisson with ZI TMB")
+tmb_nb1offzi_stats <- glmmtmb_stats(tmb_nb1offzi, "NB Type I with ZI and Offset TMB")
+tmb_nb1ziproc_stats <- glmmtmb_stats(tmb_nb1ziproc, "NB Type I with ZI Process TMB")
+tmb_nb2ziproc_stats <- glmmtmb_stats(tmb_nb2ziproc, "NB Type II with ZI Process TMB")
+tmb_pziproc_stats <- glmmtmb_stats(tmb_pziproc, "Poisson with ZI Process TMB")
+tmb_nb1ziprocpop_stats <- glmmtmb_stats(tmb_nb1ziprocpop, "NB Type I with ZI Population Process TMB")
+tmb_nb2ziprocpop_stats <- glmmtmb_stats(tmb_nb2ziprocpop, "NB Type II with ZI Population Process TMB")
+tmb_pziprocpop_stats <- glmmtmb_stats(tmb_pziprocpop, "Poisson with ZI Population Process TMB")
+tmb_nb1ziproclat_stats <- glmmtmb_stats(tmb_nb1ziproclat, "NB Type I with ZI Latitutde Process TMB")
+tmb_nb2ziproclat_stats <- glmmtmb_stats(tmb_nb2ziproclat, "NB Type II with ZI Latitude Process TMB")
+tmb_pziproclat_stats <- glmmtmb_stats(tmb_pziproclat, "Poisson with ZI Latitude Process TMB")
+tmb_nb1ziproccell_stats <- glmmtmb_stats(tmb_nb1ziproccell, "NB Type I with ZI Cell Process TMB")
+tmb_nb2ziproccell_stats <- glmmtmb_stats(tmb_nb2ziproccell, "NB Type II with ZI Cell Process TMB")
+tmb_pziproccell_stats <- glmmtmb_stats(tmb_pziproccell, "Poisson with ZI Cell Process TMB")
+tmb_nb1ziprocdep_stats <- glmmtmb_stats(tmb_nb1ziprocdep, "NB Type I with ZI Depth Process TMB")
+tmb_nb2ziprocdep_stats <- glmmtmb_stats(tmb_nb2ziprocdep, "NB Type I with ZI Depth Process TMB")
+tmb_nb1ziprocdeppop_stats <- glmmtmb_stats(tmb_nb1ziprocdeppop, "NB Type I with ZI Depth + Population Process TMB")
+tmb_nb2ziprocdeppop_stats <- glmmtmb_stats(tmb_nb2ziprocdeppop, "NB Type II with ZI Depth + Population Process TMB")
+tmb_nb1ziprocdeplat_stats <- glmmtmb_stats(tmb_nb1ziprocdeplat, "NB Type I with ZI Depth + Latitude Process TMB")
+tmb_nb2ziprocdeplat_stats <- glmmtmb_stats(tmb_nb2ziprocdeplat, "NB Type II with ZI Depth + Latitude Process TMB")
+tmb_nb1ziprocpoplat_stats <- glmmtmb_stats(tmb_nb1ziprocpoplat, "NB Type I with ZI Pop + Latitude Process TMB")
+tmb_nb2ziprocpoplat_stats <- glmmtmb_stats(tmb_nb2ziprocpoplat, "NB Type II with ZI Pop + Latitude Process TMB")
+
+AIC(tmb_nb1, tmb_nb2, tmb_p, tmb_nb1zi, tmb_nb2zi, tmb_pzi, tmb_nb1offzi, tmb_nb1ziproc, tmb_nb2ziproc, tmb_pziproc, tmb_nb1ziprocpop, tmb_nb2ziprocpop, tmb_pziprocpop, tmb_nb1ziproclat, tmb_nb2ziproclat, tmb_pziproclat, tmb_nb1ziproccell, tmb_nb2ziproccell, tmb_pziproccell, tmb_nb1ziprocdep, tmb_nb2ziprocdep, tmb_nb1ziprocdeppop, tmb_nb2ziprocdeppop, tmb_nb1ziprocdeplat, tmb_nb2ziprocdeplat, tmb_nb1ziprocpoplat, tmb_nb2ziprocpoplat) # just for fun, how's it going? ones with an explicit zi process, either without covariates or with a population parameter, are best
+```
+
+```{r}
+#| label: combine stats from different models into a big dataframe
+
+stats_full <- rbind(gam_nb_stats, gam_nboff_stats, 
+      gamlss_nbii_stats, gamlss_pig_stats, gamlss_nbiioff_stats, gamlss_pigoff_stats, gamlss_nbiiziproc_stats, gamlss_pigziproc_stats, gamlss_zanbiziproc_stats, gamlss_nbiiziprocpop_stats, gamlss_pigziprocpop_stats, gamlss_zanbiziprocpop_stats,gamlss_nbiiziproclat_stats, gamlss_pigziproclat_stats, gamlss_zanbiziproclat_stats,gamlss_nbiiziproccell_stats,
+      tmb_nb1_stats, tmb_nb2_stats, tmb_p_stats, tmb_nb1zi_stats, tmb_nb2zi_stats, tmb_pzi_stats, tmb_nb1offzi_stats, tmb_nb1ziproc_stats, tmb_nb2ziproc_stats, tmb_pziproc_stats, tmb_nb1ziprocpop_stats, tmb_nb2ziprocpop_stats, tmb_pziprocpop_stats, tmb_nb1ziproclat_stats, tmb_nb2ziproclat_stats, tmb_pziproclat_stats, tmb_nb1ziproccell_stats, tmb_nb2ziproccell_stats, tmb_pziproccell_stats, tmb_nb1ziprocdep_stats, tmb_nb2ziprocdep_stats, tmb_nb1ziprocdeppop_stats, tmb_nb2ziprocdeppop_stats, tmb_nb1ziprocdeplat_stats, tmb_nb2ziprocdeplat_stats, tmb_nb1ziprocpoplat_stats, tmb_nb2ziprocpoplat_stats)
+```
+
+#### Decision process:
+
+1.  Scale numeric values for reference
+2.  Remove models with df 147 (these are 3SD above the mean)
+3.  Remove models with scaled RMSE or MAE greater than zero, e.g. models with variance above the mean
+4.  Remove models with scaled AIC or BIC greater than zero, e.g. models with information criterion greater than the mean
+
+```{r}
+#| label: decision process companion code
+
+stats_topmodels <- stats_full %>%
+  mutate(sPearson = scale(Pearson)[,1], sSpearman = scale(Spearman)[,1], 
+         sRMSE = scale(RMSE)[,1],  sMAE = scale(MAE)[,1], 
+         sAIC = scale(AIC)[,1], sBIC = scale(BIC)[,1], sdf = scale(df)[,1]) %>% # step 1
+  filter(df < 147) %>% # step 2
+  filter(sRMSE <= 0, sMAE <= 0) %>% # step 3
+  filter(sAIC <= 0, sBIC <= 0) # step 4
+  
+# this leaves us with 14 top models, all glmmTMB variations on including an explicit model for the zero-inflation process
+# clear top two models by AIC and BIC units are the two negative binomial models (type I and type II are tied) including both population and latitude in the model for the zero-inflation process. this makes intuitive sense!
+```
+
+```{r}
+#| label: choosing between the competing top two models
+
+# two models look very, very similar in the DHARMa residuals. Type I has a slightly higher p-value (0.45) for the KS test (Type II's is 0.35), but I don't think this justifies the decision
+plot(simulateResiduals(tmb_nb1ziprocpoplat))
+plot(simulateResiduals(tmb_nb2ziprocpoplat))
+```

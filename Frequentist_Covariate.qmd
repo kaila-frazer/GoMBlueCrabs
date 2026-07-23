@@ -1,0 +1,66 @@
+---
+title: "Frequentist_Covariate"
+author: "Kai Frazer"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+#### AI Disclosure:
+
+#### References:
+
+## Packages & Data:
+
+```{r}
+#| label: libraries
+
+library(pacman)
+p_load(glmmTMB)
+```
+
+```{r}
+#| label: data
+# note: exact duplicate of the data code chunk in Frequentist_Null.qmd
+
+matrices <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GoMBlueCrabs/ModelReadyData/modelready_matrices.rds')
+
+# extract data i want
+crab <- matrices[["crab_abun"]]
+points <- matrices[["points"]]
+depth <- matrices[["depth"]]
+winter_mean <- matrices[["winter_mean"]]
+summer_mean <- matrices[["summer_mean"]]
+pop <- matrices[["pop"]]
+
+# function to translate datat to long form
+make.long <- function(wide, flatornot, colname) {
+  
+  if (flatornot == "not") { # for timev varying data
+    long <- as.data.frame(wide) %>% mutate(cell_id = rownames(wide)) %>%
+      pivot_longer(-cell_id, names_to = "year", values_to = colname)}
+  
+  if (flatornot == "flat") { # for static data
+    long <- as.data.frame(wide)
+    long <- mutate(long, cell_id = rownames(long))}
+  
+  return(long)
+}
+
+# make everything long
+crab_long <- make.long(crab, "not", "count")
+points_long <- make.long(points, "flat", "")
+depth_long <- make.long(depth, "flat", "")
+winter_mean_long <- make.long(winter_mean, "not", "winter_mean")
+summer_mean_long <- make.long(summer_mean, "not", "summer_mean")
+pop_long <- make.long(pop, "flat", "")
+
+# join data
+data <- crab_long %>%
+  left_join(points_long, by = "cell_id") %>%
+  left_join(depth_long, by = "cell_id") %>% rename("depth" = "wide") %>%
+  left_join(winter_mean_long, by = c("cell_id", "year")) %>%
+  left_join(summer_mean_long, by = c("cell_id", "year")) %>%
+  left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
+```
