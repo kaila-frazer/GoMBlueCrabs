@@ -64,3 +64,54 @@ data <- crab_long %>%
   left_join(summer_mean_long, by = c("cell_id", "year")) %>%
   left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
 ```
+
+```{r}
+#| label: function to extract model selection stats from a given model
+
+glmmtmb_stats <- function(model, mod_string) {
+  stats <- data.frame("Model" = mod_string, 
+                    "Intercept" = as.numeric(fixef(model)$cond[1]),
+                    "Pearson" = cor(model.frame(model)[[1]],fitted(model),method="pearson"),
+                    "Spearman" = cor(model.frame(model)[[1]],fitted(model),method="spearman"),
+                    "RMSE" = sqrt(mean(residuals (model, type = "response")^2)),
+                    "MAE" = mean(abs(residuals(model, type = "response"))),
+                    "AIC" = AIC(model), "BIC" = BIC(model),
+                    "log_link" = family(model)$link, "df" = attr(logLik(model), "df"),
+                    "Package" = "glmmTMB")
+  return(stats)}
+```
+
+## Null model:
+
+```{r}
+#| label: null model
+
+null <- glmmTMB(count ~ 1, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+null_stats <- glmmtmb_stats(null, "Null")
+```
+
+## One covariate at a time:
+
+```{r}
+#| label: one covariate at a time
+
+# year <- glmmTMB(count ~ year, ziformula = ~ pop + latitude, family = nbinom2(), data = data) # convervence issues, reject
+
+depth <- glmmTMB(count ~ depth, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(depth)) # okay
+depth_stats <- glmmtmb_stats(depth, "Depth")
+
+winter_mean <- glmmTMB(count ~ winter_mean, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(winter_mean)) # okay, but did hit an error for missing values
+winter_mean_stats <- glmmtmb_stats(winter_mean, "Winter Mean")
+
+summer_mean <- glmmTMB(count ~ summer_mean, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(summer_mean)) # quantile deviations, don't reject but probably bad
+summer_mean_stats <- glmmtmb_stats(summer_mean, "Summer Mean")
+```
+
+```{r}
+#| label: combine single-covariate models
+
+single_covariates <- rbind(null_stats, depth_stats, summer_mean_stats, winter_mean_stats) # not sure what to make of this - summer_mean model is much better but there are quantile deviations in the qq plot
+```
