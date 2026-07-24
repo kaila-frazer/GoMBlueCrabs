@@ -43,8 +43,6 @@ matrices <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/
 crab <- matrices[["crab_abun"]]
 points <- matrices[["points"]]
 depth <- matrices[["depth"]]
-winter_mean <- matrices[["winter_mean"]]
-summer_mean <- matrices[["summer_mean"]]
 pop <- matrices[["pop"]]
 
 # function to translate datat to long form
@@ -65,16 +63,12 @@ make.long <- function(wide, flatornot, colname) {
 crab_long <- make.long(crab, "not", "count")
 points_long <- make.long(points, "flat", "")
 depth_long <- make.long(depth, "flat", "")
-winter_mean_long <- make.long(winter_mean, "not", "winter_mean")
-summer_mean_long <- make.long(summer_mean, "not", "summer_mean")
 pop_long <- make.long(pop, "flat", "")
 
 # join data
 data <- crab_long %>%
   left_join(points_long, by = "cell_id") %>%
   left_join(depth_long, by = "cell_id") %>% rename("depth" = "wide") %>%
-  left_join(winter_mean_long, by = c("cell_id", "year")) %>%
-  left_join(summer_mean_long, by = c("cell_id", "year")) %>%
   left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
 ```
 

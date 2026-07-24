@@ -17,12 +17,12 @@ editor_options:
 #| label: libraries
 
 library(pacman)
-p_load(glmmTMB)
+p_load(glmmTMB, ggplot2, dplyr, patchwork)
 ```
 
 ```{r}
 #| label: data
-# note: exact duplicate of the data code chunk in Frequentist_Null.qmd
+# note: duplicate of methods from Frequentist_Null.qmd
 
 matrices <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GoMBlueCrabs/ModelReadyData/modelready_matrices.rds')
 
@@ -32,6 +32,15 @@ points <- matrices[["points"]]
 depth <- matrices[["depth"]]
 winter_mean <- matrices[["winter_mean"]]
 summer_mean <- matrices[["summer_mean"]]
+winter_min <- matrices[["winter_min"]]
+summer_max <- matrices[["summer_max"]]
+fall_flags <- matrices[["fall_flags"]]
+winter_flags <- matrices[["winter_flags"]]
+spring_flags <- matrices[["spring_flags"]]
+yearly_flags <- matrices[["yearly_flags"]]
+ddd <- matrices[["ddd"]]
+rdd <- matrices[["rdd"]]
+sdd <- matrices[["sdd"]]
 pop <- matrices[["pop"]]
 
 # function to translate datat to long form
@@ -54,6 +63,16 @@ points_long <- make.long(points, "flat", "")
 depth_long <- make.long(depth, "flat", "")
 winter_mean_long <- make.long(winter_mean, "not", "winter_mean")
 summer_mean_long <- make.long(summer_mean, "not", "summer_mean")
+summer_max_long <- make.long(summer_max, "not", "summer_max")
+winter_min_long <- make.long(winter_min, "not", "winter_min")
+yearly_flags <- make.long(yearly_flags, "not", "yearly_flags")
+ddd <- make.long(ddd, "not", "ddd")
+rdd <- make.long(rdd, "not", "rdd")
+sdd <- make.long(sdd, "not", "sdd")
+fall_flags <- make.long(fall_flags, "not", "fall_flags")
+spring_flags <- make.long(spring_flags, "not", "spring_flags")
+winter_flags <- make.long(winter_flags, "not", "winter_flags")
+
 pop_long <- make.long(pop, "flat", "")
 
 # join data
@@ -62,6 +81,15 @@ data <- crab_long %>%
   left_join(depth_long, by = "cell_id") %>% rename("depth" = "wide") %>%
   left_join(winter_mean_long, by = c("cell_id", "year")) %>%
   left_join(summer_mean_long, by = c("cell_id", "year")) %>%
+  left_join(summer_max_long, by = c("cell_id", "year")) %>%
+  left_join(winter_min_long, by = c("cell_id", "year")) %>%
+  left_join(rdd, by = c("cell_id", "year")) %>%
+  left_join(sdd, by = c("cell_id", "year")) %>%
+  left_join(ddd, by = c("cell_id", "year")) %>%
+  left_join(fall_flags, by = c("cell_id", "year")) %>%
+  left_join(spring_flags, by = c("cell_id", "year")) %>%
+  left_join(winter_flags, by = c("cell_id", "year")) %>%
+  left_join(yearly_flags, by = c("cell_id", "year")) %>%
   left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
 ```
 
@@ -93,25 +121,163 @@ null_stats <- glmmtmb_stats(null, "Null")
 ## One covariate at a time:
 
 ```{r}
-#| label: one covariate at a time
+#| label: one covariate at a time, unscaled
 
 # year <- glmmTMB(count ~ year, ziformula = ~ pop + latitude, family = nbinom2(), data = data) # convervence issues, reject
 
-depth <- glmmTMB(count ~ depth, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
-plot(simulateResiduals(depth)) # okay
-depth_stats <- glmmtmb_stats(depth, "Depth")
+depth.mod <- glmmTMB(count ~ depth, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(depth.mod)) # okay
+depth_stats <- glmmtmb_stats(depth.mod, "Depth")
 
-winter_mean <- glmmTMB(count ~ winter_mean, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
-plot(simulateResiduals(winter_mean)) # okay, but did hit an error for missing values
-winter_mean_stats <- glmmtmb_stats(winter_mean, "Winter Mean")
+winter_mean.mod <- glmmTMB(count ~ winter_mean, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(winter_mean.mod)) # okay, but did hit an error for missing values
+winter_mean_stats <- glmmtmb_stats(winter_mean.mod, "Winter Mean")
 
-summer_mean <- glmmTMB(count ~ summer_mean, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
-plot(simulateResiduals(summer_mean)) # quantile deviations, don't reject but probably bad
-summer_mean_stats <- glmmtmb_stats(summer_mean, "Summer Mean")
+summer_mean.mod <- glmmTMB(count ~ summer_mean, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(summer_mean.mod)) # quantile deviations, don't reject but probably bad
+summer_mean_stats <- glmmtmb_stats(summer_mean.mod, "Summer Mean")
+
+summer_max.mod <- glmmTMB(count ~ summer_max, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(summer_max.mod)) # okay
+summer_max_stats <- glmmtmb_stats(summer_max.mod, "Summer Max")
+
+winter_min.mod <- glmmTMB(count ~ winter_min, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(winter_min.mod)) # okay
+winter_min_stats <- glmmtmb_stats(winter_min.mod, "Winter Min")
+
+# rdd.mod <- glmmTMB(count ~ rdd, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+# plot(simulateResiduals(rdd.mod)) # failed one test that i can't see and threw warning may have inflated type I errors, reject
+
+# sdd.mod <- glmmTMB(count ~ sdd, ziformula = ~ pop + latitude, family = nbinom2(), data = data) # dropped the column, reject
+
+ddd.mod <- glmmTMB(count ~ ddd, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(ddd.mod)) # okay
+ddd_stats <- glmmtmb_stats(ddd.mod, "DDD")
+
+# fall_flags.mod <- glmmTMB(count ~ fall_flags, ziformula = ~ pop + latitude, family = nbinom2(), data = data) # dropped the column, reject
+
+spring_flags.mod <- glmmTMB(count ~ spring_flags, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(spring_flags.mod)) # okay
+spring_flags_stats <- glmmtmb_stats(spring_flags.mod, "Spring Flags")
+
+winter_flags.mod <- glmmTMB(count ~ winter_flags, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(winter_flags.mod)) # okay
+winter_flags_stats <- glmmtmb_stats(winter_flags.mod, "Winter Flags")
+
+yearly_flags.mod <- glmmTMB(count ~ yearly_flags, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(yearly_flags.mod)) # okay
+yearly_flags_stats <- glmmtmb_stats(yearly_flags.mod, "Yearly Flags")
 ```
 
 ```{r}
-#| label: combine single-covariate models
+#| label: combine single-covariate models, unscaled
 
-single_covariates <- rbind(null_stats, depth_stats, summer_mean_stats, winter_mean_stats) # not sure what to make of this - summer_mean model is much better but there are quantile deviations in the qq plot
+single_covariates <- rbind(null_stats, depth_stats, summer_mean_stats, winter_mean_stats, summer_max_stats, winter_min_stats, ddd_stats, winter_flags_stats, spring_flags_stats, yearly_flags_stats) # not sure what to make of this - summer_mean model is much better but there are quantile deviations in the qq plot
+```
+
+```{r}
+#| label: one covariate at a time, scaled
+
+depth.mods <- glmmTMB(count ~ scale(depth), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(depth.mods)) # okay
+depth_stats <- glmmtmb_stats(depth.mods, "Depth")
+
+winter_mean.mods <- glmmTMB(count ~ scale(winter_mean), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(winter_mean.mods)) # okay, but did hit an error for missing values
+winter_mean_stats <- glmmtmb_stats(winter_mean.mods, "Winter Mean")
+
+summer_mean.mods <- glmmTMB(count ~ scale(summer_mean), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(summer_mean.mods)) # quantile deviations, don't reject but probably bad
+summer_mean_stats <- glmmtmb_stats(summer_mean.mods, "Summer Mean")
+
+summer_max.mods <- glmmTMB(count ~ scale(summer_max), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(summer_max.mods)) # okay
+summer_max_stats <- glmmtmb_stats(summer_max.mods, "Summer Max")
+
+winter_min.mods <- glmmTMB(count ~ scale(winter_min), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(winter_min.mods)) # okay
+winter_min_stats <- glmmtmb_stats(winter_min.mods, "Winter Min")
+
+ddd.mods <- glmmTMB(count ~ scale(ddd), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(ddd.mods)) # okay
+ddd_stats <- glmmtmb_stats(ddd.mods, "DDD")
+
+spring_flags.mods <- glmmTMB(count ~ scale(spring_flags), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(spring_flags.mods)) # okay
+spring_flags_stats <- glmmtmb_stats(spring_flags.mods, "Spring Flags")
+
+winter_flags.mods <- glmmTMB(count ~ scale(winter_flags), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(winter_flags.mods)) # okay
+winter_flags_stats <- glmmtmb_stats(winter_flags.mods, "Winter Flags")
+
+yearly_flags.mods <- glmmTMB(count ~ scale(yearly_flags), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(yearly_flags.mods)) # okay
+yearly_flags_stats <- glmmtmb_stats(yearly_flags.mods, "Yearly Flags")
+```
+
+```{r}
+#| label: combine single-covariate models, scaled
+
+scaled_single_covariates <- rbind(null_stats, depth_stats, summer_mean_stats, winter_mean_stats, summer_max_stats, winter_min_stats, ddd_stats, winter_flags_stats, spring_flags_stats, yearly_flags_stats) # not sure what to make of this - summer_mean model is much better but there are quantile deviations in the qq plot
+```
+
+## Response curves for single-covariate models:
+
+```{r}
+#| label: response and response curves functions
+
+response <- function(model, covar_vect, covar_name) { # model expects model object, covar_vect expects a column of the og dataframe, covar_name expects a the string of the variable name used to fit the model
+  
+  ## prepare
+  covar_seq <- seq(from=min(scale(covar_vect)[,1]), to=max(scale(covar_vect)[,1]), length.out=100) # sequence of values for the covariate you're looking for the response to
+  pred_dat <- cbind(as.data.frame(covar_seq),
+                    mean(scale(data$latitude)), 
+                    mean(scale(data$pop))) # combine with means of other necessary params
+  colnames(pred_dat) <- c(covar_name, "latitude", "pop") # assign column names
+  
+  ## predict
+  preds <- predict(model, newdata = pred_dat, se.fit = T, type = "link") # predict abuns
+  preds_df <- cbind(as.numeric(preds$fit), as.numeric(preds$se.fit), pred_dat) # make df
+  colnames(preds_df) <- c("pred_link", "se_link", "covariate", "latitude", "pop") # set colnames again
+  preds_df <- preds_df %>% 
+    mutate(pred_resp = exp(pred_link),
+           lower_resp = exp(pred_link - 1.96 * se_link), 
+           upper_resp = exp(pred_link + 1.96 * se_link)) %>% # find upper/lower
+    mutate(covar_descaled = covar_seq * attr(scale(covar_vect), 'scaled:scale') +
+                               attr(scale(covar_vect), 'scaled:center'))
+  
+  ## return
+  return(preds_df)
+}
+
+response_curve <- function(preds_df, xlab, title) {
+  plot <- ggplot(preds_df, aes(x=covariate, y=pred_resp)) + # covariate will be on the link scale, pred_resp will be back on the response scale
+    geom_line() + # mu line
+    geom_ribbon(aes(ymin=lower_resp, ymax=upper_resp), alpha=0.3) + # 95% CI on response scale
+    scale_x_continuous(breaks = preds_df$covariate[nice_ids], # breaks from scaled covar
+    labels = round(preds_df$covar_descaled[nice_ids])) + # labels from descaled covar
+    labs(y="Crab abundance", x=xlab, title=title) +
+  theme_classic()
+  return(plot)
+}
+
+# example
+# response_curve(response(winter_min.mods, data$winter_min, "winter_min"), "Minimum winter temperature (°C)", "Response to minimum winter temperature")
+```
+
+```{r}
+#| label: curves for scaled, single -covariate models
+
+winter_min_plot <- response_curve(response(winter_min.mods, data$winter_min, "winter_min"), "Minimum winter temperature (°C)", "7. Minimum winter temperature")
+winter_mean_plot <- response_curve(response(winter_mean.mods, data$winter_mean, "winter_mean"), "Mean winter temperature (°C)", "6. Mean winter temperature")
+summer_mean_plot <- response_curve(response(summer_mean.mods, data$summer_mean, "summer_mean"), "Mean summer temperature (°C)", "1. Mean summer temperature")
+summer_max_plot <- response_curve(response(summer_max.mods, data$summer_max, "summer_max"), "Maximum summer temperature (°C)", "2. Maximum summer temperature")
+winter_min_plot <- response_curve(response(winter_min.mods, data$winter_min, "winter_min"), "Minimum winter temperature (°C)", "Minimum winter temperature")
+depth_plot <- response_curve(response(depth.mods, data$depth, "depth"), "Depth (m)", "3. Depth")
+ddd_plot <- response_curve(response(ddd.mods, data$ddd, "ddd"), "Yearly death degree days (3°C and below)", "8. Death degree days")
+winter_flags_plot <- response_curve(response(winter_flags.mods, data$winter_flags, "winter_flags"), "Days below 3°C during winter", "5. Winter flag days")
+spring_flags_plot <- response_curve(response(spring_flags.mods, data$spring_flags, "spring_flags"), "Days below 3°C during spring", "4. Spring flag days")
+yearly_flags_plot <- response_curve(response(yearly_flags.mods, data$yearly_flags, "yearly_flags"), "Days below 3°C for that year starting in December", "9. Yearly flag days")
+
+(summer_mean_plot + summer_max_plot + depth_plot) / (spring_flags_plot + winter_flags_plot + winter_mean_plot) / (winter_min_plot + ddd_plot + yearly_flags_plot) + plot_annotation(title = "Single-covariate models", subtitle = "Ranked by AIC")
 ```
