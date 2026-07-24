@@ -17,7 +17,7 @@ Claude chat that first suggested climwin as a package to explore, as well as som
 #| label: libraries
 
 library(pacman)
-p_load(lme4, climwin)
+p_load(lme4, climwin, terra)
 ```
 
 ```{r}
@@ -59,8 +59,31 @@ data <- crab_long %>%
 ```{r}
 #| label: climate data for climwin
 
-##
+## oisst code from Covariate_Construction.qmd
 
+oisst_daily <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_2026.rds') %>% 
+  mutate(date_time = ymd_hms(time), date = date(date_time), 
+         year = year(date), month = month(date), 
+         yearmon = as.yearmon(date),
+         season = factor(case_when(month %in% c(12,1,2) ~ "Winter",
+                            month %in% c(3,4,5) ~ "Spring",
+                            month %in% c(6,7,8) ~ "Summer",
+                            month %in% c(9,10,11) ~ "Fall"))) %>%
+  select(longitude, latitude, date_time, date, year, yearmon, month, season, sst) %>%
+  mutate(longitude = case_when(as.numeric(longitude) < 0 ~ longitude,
+                               as.numeric(longitude) > 0 ~ as.numeric(longitude) - 360))
+
+oisst_daily_nona <- na.omit(oisst_daily) # now the monthly data shouldn't have NAs
+
+oisst_monthly_nona <- oisst_daily_nona %>%
+  group_by(longitude, latitude, yearmon, year, season, month) %>%
+  summarize(monthly_sst = mean(sst), monthly_min = min(sst), monthly_max = max(sst)) %>%
+  mutate(longitude = case_when(as.numeric(longitude) < 0 ~ longitude,
+                               as.numeric(longitude) > 0 ~ as.numeric(longitude) - 360))
+
+oisst_month_points <- right_join(oisst_monthly_nona, 
+                                   points_long, by = c("longitude", "latitude")) %>% 
+  mutate(date = as.Date(yearmon)) %>% ungroup() %>% select(date, monthly_sst, cell_id)
 ```
 
 ```{r}
@@ -72,7 +95,8 @@ crab_month_long <- as.data.frame(crab_month) %>% mutate(lonlat = rownames(crab_m
       separate(lonlat, into = c("longitude", "latitude"), sep="_") %>% 
   mutate(longitude = as.double(longitude), latitude = as.double(latitude)) %>%
   left_join(points_long) %>%
-  mutate(date = as.Date(as.yearmon(yearmon, format="%Y.%b"))) %>% select(date, abun, cell_id)
+  mutate(date = as.Date(as.yearmon(yearmon, format="%Y.%b"))) %>% select(date, abun, cell_id) %>%
+  filter(date %in% unique(oisst_month_points$date))
 ```
 
 ## Null model
