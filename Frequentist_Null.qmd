@@ -7,14 +7,6 @@ editor_options:
   chunk_output_type: console
 ---
 
-#### AI disclosure:
-
-Claude chat helped me explore packages available to me and compare null models between packages: <https://claude.ai/share/d8438437-ed0e-4b85-9ab0-8306300d8731>
-
-Claude chat giving me shortcuts for accessing intercepts and residuals for the different model types: <https://claude.ai/share/23ec39d3-c255-41af-b354-23e424aa796f>
-
-Claude chat suggesting references/leads for choosing between negative binomial type 1 and type 2 null models: <https://pubmed.ncbi.nlm.nih.gov/18051645/>
-
 #### References:
 
 Bolker 2020 for more in depth review of glmmTMB.
@@ -24,6 +16,14 @@ Sutherland et al. 2023 for a more in-depth understanding of AIC for model select
 Ver Hoef and Boveng 2007 for ecological example of how choices between negative binomial type 1 and type 2 distributions will affect covariate weights down the line
 
 Zuur et al. 2009 for a review of zero-inflation types and model selection inspiration.
+
+#### AI disclosure:
+
+Claude chat helped me explore packages available to me and compare null models between packages: <https://claude.ai/share/d8438437-ed0e-4b85-9ab0-8306300d8731>
+
+Claude chat giving me shortcuts for accessing intercepts and residuals for the different model types: <https://claude.ai/share/23ec39d3-c255-41af-b354-23e424aa796f>
+
+Claude chat suggesting references/leads for choosing between negative binomial type 1 and type 2 null models: <https://pubmed.ncbi.nlm.nih.gov/18051645/>
 
 ## Packages & Data:
 

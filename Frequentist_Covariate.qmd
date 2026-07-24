@@ -7,9 +7,15 @@ editor_options:
   chunk_output_type: console
 ---
 
+#### References:
+
+Zuur et al. 2009 for workflow to build a model (from the best null to the best single fixed effect to the best random effects to the best fixed structure)
+
+Bolker 2020 for details to add random effects to glmmTMB model
+
 #### AI Disclosure:
 
-#### References:
+Claude chat helping me with little errors writing response curve <https://claude.ai/share/68065871-5bbc-4b06-878d-274b0e23e482>
 
 ## Packages & Data:
 
@@ -280,4 +286,92 @@ spring_flags_plot <- response_curve(response(spring_flags.mods, data$spring_flag
 yearly_flags_plot <- response_curve(response(yearly_flags.mods, data$yearly_flags, "yearly_flags"), "Days below 3°C for that year starting in December", "9. Yearly flag days")
 
 (summer_mean_plot + summer_max_plot + depth_plot) / (spring_flags_plot + winter_flags_plot + winter_mean_plot) / (winter_min_plot + ddd_plot + yearly_flags_plot) + plot_annotation(title = "Single-covariate models", subtitle = "Ranked by AIC")
+```
+
+## Adding random effects
+
+Best single-covariate (fixed effect or "best optimal" termed by Zuur) model is:
+
+optimal \<- glmmTMB(count \~ scale(summer_mean), ziformula = \~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+
+```{r}
+#| label: build from best fixed effect model
+
+optimal <- glmmTMB(count ~ scale(summer_mean), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(optimal)) # quantile deviations
+optimal_stats <- glmmtmb_stats(optimal, "Optimal with ZI formula")
+
+cellfx <- glmmTMB(count ~ scale(summer_mean) + 1|cell_id, ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(cellfx)) # failed dispersion test
+cellfx_stats <- glmmtmb_stats(cellfx, "Cell random intercepts")
+
+yrfx <- glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(yrfx)) # no problems
+yrfx_stats <- glmmtmb_stats(yrfx, "Year random intercepts")
+
+fx_stats <- rbind(optimal_stats, cellfx_stats, yrfx_stats) # year random effects are best. this is great! makes sense.
+
+# yrcellfx <- glmmTMB(count ~ scale(summer_mean) + year|cell_id, ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data) # let it run 8 minutes before stopping it, at which point i got NA/NaN function evaluation errors, reject
+
+## testing combinations of removing the zi formula, all these models fail the qq plot dispersion test
+
+## with an offset but without zi formula, with the best random effect found above
+
+# yrfx_off <- glmmTMB(count ~ scale(summer_mean) + (1|year) + offset(log(pop)), ziformula = ~ scale(latitude), family = nbinom2(), data = data)
+# plot(simulateResiduals(yrfx_off)) # failed dispersion test
+# yrfx_off_stats <- glmmtmb_stats(yrfx_off, "Year random intercepts with population offset")
+# 
+# yrfx_off_nozi <- glmmTMB(count ~ scale(summer_mean) + (1|year) + offset(log(pop)), ziformula = ~ 1, family = nbinom2(), data = data)
+# plot(simulateResiduals(yrfx_off_nozi)) # failed dispersion test
+# yrfx_off_nozi_stats <- glmmtmb_stats(yrfx_off_nozi, "Year random intercepts with population offset and without zero-inflation formula")
+
+## without zi formula, just to check if that was subbing in for random effects somehow
+
+# optimal_sanszi <- glmmTMB(count ~ scale(summer_mean), ziformula = ~ 1, family = nbinom2(), data = data)
+# plot(simulateResiduals(optimal_sanszi)) # more quantile deviations
+# optimal_stats <- glmmtmb_stats(optimal_sanszi, "Optimal without ZI formula")
+# 
+# popfx_sanszi <- glmmTMB(count ~ scale(summer_mean) + 1|pop, ziformula = ~ 1, family = nbinom2(), data = data)
+# plot(simulateResiduals(popfx_sanszi)) # failed dispersion test
+# popfx_stats <- glmmtmb_stats(popfx_sanszi, "Population effect without ZI formula")
+# 
+# latfx_sanszi <- glmmTMB(count ~ scale(summer_mean) + 1|latitude, ziformula = ~ 1, family = nbinom2(), data = data)
+# plot(simulateResiduals(latfx_sanszi)) # failed dispersion test
+# latfx_stats <- glmmtmb_stats(latfx_sanszi, "Latitude effect without ZI formula")
+# 
+# ## with only half of the zi formula, similar sanity check to the above
+# 
+# popfx <- glmmTMB(count ~ scale(summer_mean) + 1|pop, ziformula = ~ scale(latitude), family = nbinom2(), data = data)
+# plot(simulateResiduals(popfx)) # failed dispersion test
+# popfx_withzi_stats <- glmmtmb_stats(popfx, "Population effect with latitude ZI formula")
+# 
+# latfx <- glmmTMB(count ~ scale(summer_mean) + 1|latitude, ziformula = ~ scale(pop), family = nbinom2(), data = data)
+# plot(simulateResiduals(latfx)) # failed dispersion test
+# latfx_withzi_stats <- glmmtmb_stats(latfx, "Latitude effect with population ZI formula")
+```
+
+## Add additional covariates
+
+Best random-effect model with a single fixed effect is:
+
+effect \<- glmmTMB(count \~ scale(summer_mean) + (1\|year), ziformula = \~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+
+```{r}
+#| label: adding covariates
+
+# return to scaled_single_covariates stats dataframe. we only want to add covariates that aren't collinear and that beat the null model. the single-covariate models that beat the null were summer mean, summer max, and depth
+
+# test if summer max is collinear with the covariate we already have (summer mean)
+cor(data$summer_max, data$summer_mean) # 0.94 means they are HIHGLY correlated, won't try adding summer max
+
+# so we just have to test if depth helps things out!
+effect <- glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(effect)) # looks okay
+effect_stats <- glmmtmb_stats(effect, "Optimal model with random effect")
+
+effect_wdepth <- glmmTMB(count ~ scale(summer_mean) + scale(depth) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(effect_wdepth)) # looks okay
+effect_wdepth_stats <- glmmtmb_stats(effect_wdepth, "Optimal model with random effect and additional depth covariate")
+
+View(rbind(effect_stats, effect_wdepth_stats)) # BIC gets worse and AIC only gets one unit better, which isn't enough to justify adding the covariate
 ```
