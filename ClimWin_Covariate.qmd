@@ -4,3 +4,104 @@ author: "Kai Frazer"
 format: html
 editor: visual
 ---
+
+#### References
+
+#### AI Disclosure
+
+Claude chat that first suggested climwin as a package to explore, as well as some introductory code for using it: <https://claude.ai/share/d8438437-ed0e-4b85-9ab0-8306300d8731>
+
+## Packages & Data
+
+```{r}
+#| label: libraries
+
+library(pacman)
+p_load(lme4, climwin)
+```
+
+```{r}
+#| label: data for model
+# note: duplicate of methods from Frequentist_Null.qmd
+
+matrices <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GoMBlueCrabs/ModelReadyData/modelready_matrices.rds')
+
+# extract data i want
+crab <- matrices[["crab_abun"]]
+points <- matrices[["points"]]
+pop <- matrices[["pop"]]
+
+# function to translate datat to long form
+make.long <- function(wide, flatornot, colname) {
+  
+  if (flatornot == "not") { # for timev varying data
+    long <- as.data.frame(wide) %>% mutate(cell_id = rownames(wide)) %>%
+      pivot_longer(-cell_id, names_to = "year", values_to = colname)}
+  
+  if (flatornot == "flat") { # for static data
+    long <- as.data.frame(wide)
+    long <- mutate(long, cell_id = rownames(long))}
+  
+  return(long)
+}
+
+# make everything long
+crab_long <- make.long(crab, "not", "count")
+points_long <- make.long(points, "flat", "")
+pop_long <- make.long(pop, "flat", "")
+
+# join data
+data <- crab_long %>%
+  left_join(points_long, by = "cell_id") %>%
+  left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
+```
+
+```{r}
+#| label: climate data for climwin
+
+##
+
+```
+
+```{r}
+#| label: bio data for climwin
+
+crab_month <- readRDS("ModelReadyData/crab[i,m,y].rds")
+crab_month_long <- as.data.frame(crab_month) %>% mutate(lonlat = rownames(crab_month)) %>%
+      pivot_longer(-lonlat, names_to = "yearmon", values_to = "abun") %>%
+      separate(lonlat, into = c("longitude", "latitude"), sep="_") %>% 
+  mutate(longitude = as.double(longitude), latitude = as.double(latitude)) %>%
+  left_join(points_long) %>%
+  mutate(date = as.Date(as.yearmon(yearmon, format="%Y.%b"))) %>% select(date, abun, cell_id)
+```
+
+## Null model
+
+```{r}
+#| label: reconstructing model from Frequentist_Covariate.qmd
+
+# climwin can only take lm, glm, lmer, glmer
+# best model was glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data) with an AIC of 1302; let's see how close we can get to that
+
+baseline <- glmer.nb(count ~ (1|year), data=data)
+```
+
+## Search for lag window
+
+```{r}
+#| label: search
+
+# claude code
+lag_search <- slidingwin(
+  xvar = list(winter = climate_data$winter_mean),
+  cdate = climate_data$year,
+  bdate = bio_data$date,
+  baseline = baseline,
+  range = c(48, 0),       # 0 to 4 years back, in months
+  type = "relative",
+  stat = c("mean", "min"),         # test both summary stats you care about
+  func = c("lin", "quad"),         # allow for a non-monotonic lag-response shape
+  cinterval = "month"
+)
+
+```

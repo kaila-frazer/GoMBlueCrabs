@@ -375,3 +375,5 @@ effect_wdepth_stats <- glmmtmb_stats(effect_wdepth, "Optimal model with random e
 
 View(rbind(effect_stats, effect_wdepth_stats)) # BIC gets worse and AIC only gets one unit better, which isn't enough to justify adding the covariate
 ```
+
+[Note to self:]{.underline} AIC of ideal model is 1302
