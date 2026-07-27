@@ -1,0 +1,90 @@
+---
+title: "ClimWin_NewModel"
+format: html
+editor: visual
+---
+
+#### References:
+
+#### AI Disclosure:
+
+## Packages & data:
+
+```{r}
+#| label: libraries
+
+library(pacman)
+p_load(dplyr, tidyr, glmmTMB)
+```
+
+```{r}
+#| label: data and previous models
+
+### data for null model
+
+matrices <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GoMBlueCrabs/ModelReadyData/modelready_matrices.rds')
+
+# extract data i want
+crab <- matrices[["crab_abun"]]
+points <- matrices[["points"]]
+summer_mean <- matrices[["summer_mean"]]
+pop <- matrices[["pop"]]
+
+# function to translate datat to long form
+make.long <- function(wide, flatornot, colname) {
+  
+  if (flatornot == "not") { # for timev varying data
+    long <- as.data.frame(wide) %>% mutate(cell_id = rownames(wide)) %>%
+      pivot_longer(-cell_id, names_to = "year", values_to = colname)}
+  
+  if (flatornot == "flat") { # for static data
+    long <- as.data.frame(wide)
+    long <- mutate(long, cell_id = rownames(long))}
+  
+  return(long)
+}
+
+# make everything long
+crab_long <- make.long(crab, "not", "count")
+points_long <- make.long(points, "flat", "")
+summer_mean_long <- make.long(summer_mean, "not", "summer_mean")
+pop_long <- make.long(pop, "flat", "")
+
+# join data
+data <- crab_long %>%
+  left_join(points_long, by = "cell_id") %>%
+  left_join(summer_mean_long, by = c("cell_id", "year")) %>%
+  left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
+
+### null model
+
+null <- glmmTMB(count ~ 1, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+
+### previous best model
+
+effect <- glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+```
+
+```{r}
+#| label: data and climwin model
+
+## climwin data
+
+climwin <- readRDS("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search4_20260724.rds")
+
+climwin_models <- View(climwin[[1]]$Dataset)
+climwin_topmod <- climwin[[1]]$BestModel
+climwin_dat <- climwin[[1]]$BestModelData
+
+## creating dataset for climwin analysis
+
+climwin_tmbmod <- 
+```
+
+```{r}
+#| label: compare aic
+
+AIC(climwin_topmod) # 
+AIC(null) #
+AIC(effect) #
+```

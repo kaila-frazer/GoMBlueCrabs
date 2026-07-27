@@ -3,9 +3,17 @@ title: "ClimWin_Covariate"
 author: "Kai Frazer"
 format: html
 editor: visual
+editor_options: 
+  chunk_output_type: console
 ---
 
 #### References
+
+Bailey and van de Pol 2025. Advanced climwin. For example of spatial climwin
+
+Bailey and van de Pol 2016. climwin. For intro to climwin
+
+van de Pol et al. 2016. For a little more climwin background
 
 #### AI Disclosure
 
@@ -83,7 +91,10 @@ oisst_monthly_nona <- oisst_daily_nona %>%
 
 oisst_month_points <- right_join(oisst_monthly_nona, 
                                    points_long, by = c("longitude", "latitude")) %>% 
-  mutate(date = as.Date(yearmon)) %>% ungroup() %>% select(date, monthly_sst, cell_id)
+  mutate(date = as.Date(yearmon)) %>% ungroup() %>% select(date, monthly_sst, cell_id) %>%
+  filter(year(date) != 2026)
+
+climdat <- oisst_month_points
 ```
 
 ```{r}
@@ -96,7 +107,9 @@ crab_month_long <- as.data.frame(crab_month) %>% mutate(lonlat = rownames(crab_m
   mutate(longitude = as.double(longitude), latitude = as.double(latitude)) %>%
   left_join(points_long) %>%
   mutate(date = as.Date(as.yearmon(yearmon, format="%Y.%b"))) %>% select(date, abun, cell_id) %>%
-  filter(date %in% unique(oisst_month_points$date))
+  filter(date %in% unique(oisst_month_points$date)[49:533], year(date) != 2026)
+
+biodat <- crab_month_long
 ```
 
 ## Null model
@@ -107,25 +120,202 @@ crab_month_long <- as.data.frame(crab_month) %>% mutate(lonlat = rownames(crab_m
 # climwin can only take lm, glm, lmer, glmer
 # best model was glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data) with an AIC of 1302; let's see how close we can get to that
 
-baseline <- glmer.nb(count ~ (1|year), data=data)
+moddat <- biodat %>% mutate(year = year(date))
+
+basemod <- glmer.nb(abun ~ (1|year), data=moddat) # AIC of 1722 when run on the yearly aggregated data (data), AIC of 4187 when run on the monthly data (moddat)
+
+# ## or if climwin can actually take tmb, then...
+# 
+# moddat <- biodat %>% mutate(year = year(date)) %>% left_join(points_long, by = c("cell_id")) %>%
+#   left_join(pop_long, by = c("cell_id")) %>% rename(pop = wide)
+# 
+# # or wait if it can accept glmmTMB...
+# basemod_tmb <- glmmTMB(abun ~ (1|year), ziformula = ~1, family = nbinom2(), data = moddat) # dang, aic really goes up for the monthly data over the yearly null # mmm except climwin doesn't accept a zi formula
 ```
 
 ## Search for lag window
 
+[Issue documentation:]{.underline}
+
+**After each initialization**, I get the note: "fixed-effect model matrix is rank deficient so dropping 1 column / coefficient"
+
+**After each run**, I get the warning: "In checkConv(attr(opt, "derivs"), opt$par, ctrl = control$checkConv, : Model failed to converge with max\|grad\| = 0.101604 (tol = 0.002, component 1)"
+
+**So I think what's happening:** Is that because some years don't have any observations, and year is a random effect, some years simply can't fit the model. The thing that confuses me is why this would be an issue during the climwin run and not when I run the basemod. HOWEVER, I don't get any lme4 errors for the best model when I run an absolute analysis.
+
 ```{r}
-#| label: search
+#| label: search1 - first try at a search
 
-# claude code
-lag_search <- slidingwin(
-  xvar = list(winter = climate_data$winter_mean),
-  cdate = climate_data$year,
-  bdate = bio_data$date,
-  baseline = baseline,
-  range = c(48, 0),       # 0 to 4 years back, in months
-  type = "relative",
-  stat = c("mean", "min"),         # test both summary stats you care about
-  func = c("lin", "quad"),         # allow for a non-monotonic lag-response shape
-  cinterval = "month"
-)
+search1 <- slidingwin(xvar = list(sst = climdat$monthly_sst),
+                      cdate = climdat$date,
+                      bdate = biodat$date,
+                      baseline = basemod_tmb,
+                      cinterval = "month",
+                      range = c(48,0),
+                      type = "relative",
+                      stat = "mean", # c("mean", "min)
+                      func = "lin", # c("lin", "quad")
+                      spatial = list(biodat$cell_id, climdat$cell_id)) # takes an hour or two
+saveRDS(search1, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search1_20260724.rds")
 
+View(search1[[1]]$Dataset)
+search1[[1]]$BestModel
+search1[[1]]$BestModel@optinfo$conv$lme4$messages # did have failed to converge messages :(
+
+out1 <- search1[[1]]$Dataset
+
+# plots from climwin vignette
+plotdelta(dataset = out1) # WOW there is seasonality
+plotweights(dataset = out1) # very small number of models in the 95% confidence set
+plotbetas(dataset = out1) # clear increase in effect a year out
+plotwin(dataset = out1) # not quite sure what to make of these
+```
+
+```{r}
+#| label: search2 - now with scaled values for temp in hopes that that'll throw fewer errors
+
+search2 <- slidingwin(xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
+                      cdate = climdat$date,
+                      bdate = biodat$date,
+                      baseline = basemod,
+                      cinterval = "month",
+                      range = c(48,0),
+                      type = "relative",
+                      stat = "mean", # c("mean", "min)
+                      func = "lin", # c("lin", "quad")
+                      spatial = list(biodat$cell_id, climdat$cell_id))
+
+saveRDS(search2, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search2_20260724.rds")
+
+View(search2[[1]]$Dataset)
+search2[[1]]$BestModel
+search2[[1]]$BestModel@optinfo$conv$lme4$messages # did have failed to converge messages :(
+
+out2 <- search2[[1]]$Dataset
+
+# plots from climwin vignette
+plotdelta(dataset = out2) # WOW there is seasonality
+plotweights(dataset = out2) # very small number of models in the 95% confidence set
+plotbetas(dataset = out2) # clear increase in effect a year out
+plotwin(dataset = out2) # not quite sure what to make of these
+```
+
+```{r}
+#| label: search3 - now with absolute values from jan 7
+
+search3 <- slidingwin(xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
+                      cdate = climdat$date,
+                      bdate = biodat$date,
+                      baseline = basemod,
+                      cinterval = "month",
+                      range = c(48,0),
+                      type = "absolute",
+                      refday = c(7,1),
+                      stat = "mean", # c("mean", "min)
+                      func = "lin", # c("lin", "quad")
+                      spatial = list(biodat$cell_id, climdat$cell_id))
+
+saveRDS(search3, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search3_20260724.rds")
+
+View(search3[[1]]$Dataset)
+search3[[1]]$BestModel
+search3[[1]]$BestModel@optinfo$conv$lme4$messages # no failure to converge messages, that's good
+
+out3 <- search3[[1]]$Dataset
+
+# plots from climwin vignette
+plotdelta(dataset = out3) # WOW there is seasonality
+plotweights(dataset = out3) # very small number of models in the 95% confidence set
+plotbetas(dataset = out3) # clear increase in effect a year out
+plotwin(dataset = out3) # not quite sure what to make of these
+```
+
+```{r}
+#| label: search4 - now with absolute values from jul 1
+
+search4 <- slidingwin(xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
+                      cdate = climdat$date,
+                      bdate = biodat$date,
+                      baseline = basemod,
+                      cinterval = "month",
+                      range = c(48,0),
+                      type = "absolute",
+                      refday = c(01,07),
+                      stat = "mean", # c("mean", "min)
+                      func = "lin", # c("lin", "quad")
+                      spatial = list(biodat$cell_id, climdat$cell_id))
+
+saveRDS(search4, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search4_20260724.rds")
+
+View(search4[[1]]$Dataset)
+search4[[1]]$BestModel
+search4[[1]]$BestModel@optinfo$conv$lme4$messages # no convergence messages! yay
+
+out4 <- search4[[1]]$Dataset
+
+# plots from climwin vignette
+plotdelta(dataset = out4) # WOW there is seasonality
+plotweights(dataset = out4) # very small number of models in the 95% confidence set
+plotbetas(dataset = out4) # clear increase in effect a year out
+plotwin(dataset = out4) # not quite sure what to make of these
+```
+
+```{r}
+#| label: search5 - now looking at mean effects instead of min effects
+
+search5 <- slidingwin(xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
+                      cdate = climdat$date,
+                      bdate = biodat$date,
+                      baseline = basemod,
+                      cinterval = "month",
+                      range = c(48,0),
+                      type = "absolute",
+                      refday = c(01,07),
+                      stat = "min",
+                      func = "lin", # c("lin", "quad")
+                      spatial = list(biodat$cell_id, climdat$cell_id))
+
+saveRDS(search5, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search5_20260724.rds")
+
+View(search5[[1]]$Dataset)
+search5[[1]]$BestModel
+search5[[1]]$BestModel@optinfo$conv$lme4$messages
+
+out5 <- search5[[1]]$Dataset
+
+# plots from climwin vignette
+plotdelta(dataset = out5)
+plotweights(dataset = out5)
+plotbetas(dataset = out5)
+plotwin(dataset = out5)
+```
+
+## Randomize to test the stat strength of the output
+
+```{r}
+#| label: search4 -  randwin
+
+# rerun the analysis with dates randomized to create a dataset of random ideal windows
+rand4 <- randwin(repeats = 5, # 1 run was looking to take as long as a normal run of the climwin, which was about 1.5 hours, so i'm keeping to the minimum ex. used in the vignette
+                    xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
+                    cdate = climdat$date,
+                    bdate = biodat$date,
+                    baseline = basemod,
+                    cinterval = "month",
+                    range = c(48,0),
+                    type = "absolute",
+                    refday = c(01,07),
+                    stat = "mean",
+                    func = "lin",
+                    spatial = list(biodat$cell_id, climdat$cell_id))
+
+saveRDS(rand4, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_rand4_20260725.rds")
+
+## get the p-value of our results
+out4 <- search4[[1]]$Dataset # og output
+out4rand = rand4[[1]]
+
+pvalue(dataset = out4, datasetrand = out4rand, 
+       metric = "C", # for small randomization samples (in the vignette they used "C" for 5 repeats of randwin)
+       sample.size = 44) # 43 years used in analysis # 8.263909e-06
 ```
