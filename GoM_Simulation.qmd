@@ -1,0 +1,35 @@
+---
+title: "GoM_Simulation"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: libraries
+
+library(pacman)
+p_load(dplyr)
+```
+
+## Simulate future summers
+
+```{r}
+#| label: historical mean conditions continue
+
+# method: climatology
+
+```
+
+```{r}
+#| label: linear warming
+
+# method: climatology plus exponential function
+
+```
+
+```{r}
+#| label: increasing variability
+
+# method: 
+
+```
