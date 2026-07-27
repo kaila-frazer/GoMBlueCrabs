@@ -11,9 +11,8 @@ Frazer K, Moll R, Bradt G, Dijkstra J, Ogburn M, White E. Modeling blue crab (_C
 
 Frazer K, Moll R, Bradt G, Dijkstra J, Ogburn M, White E. Modeling blue crab (_Callinectus sapidus_) expansion into the Gulf of Maine using crowdsourced data. Poster session to be presented at: Ecological Forecasting Initative Conference; 08/03/2026; Toronto, Ontario, Canada. 
 
-### 2. Works Cited & Bibliography
+### 2. Works Cited
 
-Works Cited
 1. Image from Wikimedia Commons. https://commons.wikimedia.org/wiki/File:Blue_crab_(black_background).jpg.
 2. Johnson DS (2015) The Savory Swimmer Swims North: A Northern Range Extension of the Blue Crab Callinectes Sapidus? Journal of Crustacean Biology 35(1), 105–110. https://doi.org/10.1163/1937240X-00002293.
 3. Pershing AJ, Alexander MA, Hernandez CM, Kerr LA, Le Bris A, Mills K, Nye JA, Record N, Scannell H, Scott J, Sherwood G and Thomas A (2015) Slow adaptation in the face of rapid warming leads to collapse of the Gulf of Maine cod fishery. American Association for the Advancement of Science 350(6262), 809–812. https://doi.org/10.1126/science.aac9819.
