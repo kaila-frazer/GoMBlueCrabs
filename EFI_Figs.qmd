@@ -2,12 +2,14 @@
 title: "EFI_Figs"
 format: html
 editor: visual
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r}
 #| label: libraries
 library(pacman)
-p_load(ggplot2, glmmTMB)
+p_load(ggplot2, glmmTMB, climwin)
 ```
 
 ```{r}
@@ -66,6 +68,50 @@ ggsave(plot = plot, height=3, width=5, unit = "in",  '/Users/kailafrazer/Library
 ```{r}
 #| label: prettier climwin aic fig
 
+climwin_call <- readRDS("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search4_20260724.rds")
 
+climwin_out <- climwin_call[[1]]$Dataset
 
+# plots from climwin vignette
+delta <- plotdelta(dataset = climwin_out)
+# plotweights(dataset = climwin_out) 
+# plotbetas(dataset = climwin_out) 
+# plotwin(dataset = climwin_out) 
+
+mydelta <- delta + scale_fill_viridis_c(direction = -1) + theme_classic() + coord_fixed(ratio=1)
+
+ggsave(plot = mydelta, height = 5, width = 5, unit = "in", '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Figs/deltaAIC.png')
+```
+
+```{r}
+#| label: 2019 mean summer temps
+
+# ran code chunks in Covariate_Construction.qmd first... cheatingggg
+
+rast <- oisst_grid[[1]]
+cells <- cellFromXY(oisst_grid, xy=as.matrix(matrices[["points"]]))
+values(grid) <- NA
+gridfill <- filter(climwindat, year == 2019) %>% mutate(cell_id = as.numeric(cell_id)) %>%
+  arrange(cell_id)
+rast[cells] <- gridfill$fouryearwin
+grid <- bath_rast # create a new object
+values(grid) <- 0.0001
+grid <- mask(grid, bath_rast) # set land to na
+rast <- mask(rast, bath_rast)
+grid_poly <- as.polygons(grid) # to outline the study area in later plots
+crs(grid_poly) <- "WGS84"
+
+plot <- ggplot() + 
+    geom_spatraster(data = rast) +
+    geom_spatvector(data = land_outline, aes(color = "Coastline"), 
+                  fill = "lightgray", alpha = 0.4, lwd = 0.1) +
+     geom_spatvector(data = grid_poly, aes(color = "Study area\n> -46m"), fill = NA, lwd = 0.3, linetype = 5) + 
+    scale_fill_viridis_c("Mean summer\ntemp (°C)", option = "D",
+                       na.value = "white") +
+    scale_color_viridis_d("Outlines", option = "H") +
+    labs(x = "Latitude", y = "Longitude", title = "2019 mean summer temperature (°C)") +
+    coord_sf() +
+    theme_classic()
+
+ggsave(plot = plot, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Figs/4yrlagex.png', width=5, height=3)
 ```
