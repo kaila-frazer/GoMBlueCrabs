@@ -1,0 +1,71 @@
+---
+title: "EFI_Figs"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: libraries
+library(pacman)
+p_load(ggplot2, glmmTMB)
+```
+
+```{r}
+#| label: load model and training data files
+
+mod <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/climwin4yr_tmb.rds')
+dat <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/climwindat_recreation.rds')
+```
+
+```{r}
+#| label: response curve to lagged temp
+
+## this was originally written as a function in Frequentist_Covariate.qmd so I'm still rocking that syntax cuz I'm lazy even though I'm only running one fixed effect response and it makes more sense written out
+
+covar_vect <- dat$fouryearwin
+covar_name <- "fouryearwin"
+xlab <- "Mean summer temperature four years ago (°C)"
+title <- "Response to four year lagged temperature"
+model <- mod
+data <- dat
+
+## prepare
+  covar_seq <- seq(from=min(scale(covar_vect)[,1]), to=max(scale(covar_vect)[,1]), length.out=100) # sequence of values for the covariate you're looking for the response to
+  pred_dat <- cbind(as.data.frame(covar_seq),
+                    mean(scale(data$latitude)), 
+                    mean(scale(data$pop))) # combine with means of other necessary params
+  colnames(pred_dat) <- c(covar_name, "latitude", "pop") # assign column names
+  
+  ## predict
+  preds <- predict(model, newdata = pred_dat, se.fit = T, type = "link", re.form = NA) # predict abuns
+  preds_df <- cbind(as.numeric(preds$fit), as.numeric(preds$se.fit), pred_dat) # make df
+  colnames(preds_df) <- c("pred_link", "se_link", "covariate", "latitude", "pop") # set colnames again
+  preds_df <- preds_df %>% 
+    mutate(pred_resp = exp(pred_link),
+           lower_resp = exp(pred_link - 1.96 * se_link), 
+           upper_resp = exp(pred_link + 1.96 * se_link)) %>% # find upper/lower
+    mutate(covar_descaled = covar_seq * attr(scale(covar_vect), 'scaled:scale') +
+                               attr(scale(covar_vect), 'scaled:center'))
+
+  nice_vals <- pretty(preds_df$covar_descaled, n = 5) # create nice breaks in the scaled covar axis
+  nice_vals <- nice_vals[nice_vals >= min(preds_df$covar_descaled) & nice_vals <= max(preds_df$covar_descaled)] # clip to range of actual values
+
+  nice_ids <- sapply(nice_vals, function(v) which.min(abs(preds_df$covar_descaled - v))) # get the ids of those rows
+  
+  plot <- ggplot(preds_df, aes(x=covariate, y=pred_resp)) + # covariate will be on the link scale, pred_resp will be back on the response scale
+    geom_line() + # mu line
+    geom_ribbon(aes(ymin=lower_resp, ymax=upper_resp), alpha=0.3, fill = "#3b528b") + # 95% CI on response scale
+    scale_x_continuous(breaks = preds_df$covariate[nice_ids], # breaks from scaled covar
+    labels = round(preds_df$covar_descaled[nice_ids])) + # labels from descaled covar
+    labs(y="Crab abundance this year", x=xlab, title=title) +
+  theme_classic()
+  
+ggsave(plot = plot, height=3, width=5, unit = "in",  '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Figs/fouryearlagresponse.png')
+```
+
+```{r}
+#| label: prettier climwin aic fig
+
+
+
+```

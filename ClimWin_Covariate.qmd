@@ -135,14 +135,6 @@ basemod <- glmer.nb(abun ~ (1|year), data=moddat) # AIC of 1722 when run on the 
 
 ## Search for lag window
 
-[Issue documentation:]{.underline}
-
-**After each initialization**, I get the note: "fixed-effect model matrix is rank deficient so dropping 1 column / coefficient"
-
-**After each run**, I get the warning: "In checkConv(attr(opt, "derivs"), opt$par, ctrl = control$checkConv, : Model failed to converge with max\|grad\| = 0.101604 (tol = 0.002, component 1)"
-
-**So I think what's happening:** Is that because some years don't have any observations, and year is a random effect, some years simply can't fit the model. The thing that confuses me is why this would be an issue during the climwin run and not when I run the basemod. HOWEVER, I don't get any lme4 errors for the best model when I run an absolute analysis.
-
 ```{r}
 #| label: search1 - first try at a search
 

@@ -4,10 +4,6 @@ format: html
 editor: visual
 ---
 
-#### References:
-
-#### AI Disclosure:
-
 ## Packages & data:
 
 ```{r}
@@ -200,7 +196,16 @@ climwin41yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) * scale(oneyearwin) + (1|ye
 #| label: compare aic
 
 AIC(climwin4yr_tmb) # 1274
-AIC(climwin43yr_tmb) # 1255
+AIC(climwin43yr_tmb) # 1255 HOWEVER the interaction is negative which makes less biological sense to me so i'm gonna roll with the 4yr model for the poster as i chew more on this
 AIC(null) # 1756
 AIC(effect) # 1302
+```
+
+```{r}
+#| label: save model RDS files for access in EFI_Figs.qmd
+
+saveRDS(climwin4yr_tmb, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/climwin4yr_tmb.rds')
+saveRDS(null, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/null.rds')
+saveRDS(effect, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/0yrsummer_tmb.rds')
+saveRDS(climwindat, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/climwindat_recreation.rds')
 ```
