@@ -23,7 +23,7 @@ Claude chat helping me with little errors writing response curve <https://claude
 #| label: libraries
 
 library(pacman)
-p_load(glmmTMB, ggplot2, dplyr, patchwork)
+p_load(glmmTMB, ggplot2, dplyr, patchwork, DHARMa)
 ```
 
 ```{r}
@@ -96,7 +96,8 @@ data <- crab_long %>%
   left_join(spring_flags, by = c("cell_id", "year")) %>%
   left_join(winter_flags, by = c("cell_id", "year")) %>%
   left_join(yearly_flags, by = c("cell_id", "year")) %>%
-  left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
+  left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide") %>%
+    mutate(year_factor = factor(year), year_numeric = as.numeric(year))
 ```
 
 ```{r}
@@ -173,12 +174,26 @@ winter_flags_stats <- glmmtmb_stats(winter_flags.mod, "Winter Flags")
 yearly_flags.mod <- glmmTMB(count ~ yearly_flags, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
 plot(simulateResiduals(yearly_flags.mod)) # okay
 yearly_flags_stats <- glmmtmb_stats(yearly_flags.mod, "Yearly Flags")
+
+year.mod <- glmmTMB(count ~ year_numeric, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(year.mod)) # okay
+year_stats <- glmmtmb_stats(year.mod, "Year")
+
+yearpol.mod <- glmmTMB(count ~ poly(year_numeric, 1), ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(yearpol.mod)) # okay
+year_poly_stats <- glmmtmb_stats(yearpol.mod, "Year 1st Degree Polynomial")
+
+yearpol2.mod <- glmmTMB(count ~ poly(year_numeric, 2), ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(yearpol2.mod)) # okay
+year_poly2_stats <- glmmtmb_stats(yearpol2.mod, "Year 2nd Degree Polynomial")
 ```
 
 ```{r}
 #| label: combine single-covariate models, unscaled
 
-single_covariates <- rbind(null_stats, depth_stats, summer_mean_stats, winter_mean_stats, summer_max_stats, winter_min_stats, ddd_stats, winter_flags_stats, spring_flags_stats, yearly_flags_stats) # not sure what to make of this - summer_mean model is much better but there are quantile deviations in the qq plot
+single_covariates <- rbind(null_stats, depth_stats, summer_mean_stats, winter_mean_stats, summer_max_stats, winter_min_stats, ddd_stats, winter_flags_stats, spring_flags_stats, yearly_flags_stats, year_stats, year_poly_stats, year_poly2_stats) # not sure what to make of this - summer_mean model is much better but there are quantile deviations in the qq plot
+
+# now year becomes by far the best model
 ```
 
 ```{r}
@@ -219,12 +234,26 @@ winter_flags_stats <- glmmtmb_stats(winter_flags.mods, "Winter Flags")
 yearly_flags.mods <- glmmTMB(count ~ scale(yearly_flags), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
 plot(simulateResiduals(yearly_flags.mods)) # okay
 yearly_flags_stats <- glmmtmb_stats(yearly_flags.mods, "Yearly Flags")
+
+year.mods <- glmmTMB(count ~ scale(year_numeric), ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(year.mod)) # okay
+year_stats <- glmmtmb_stats(year.mod, "Year")
+
+yearpol.mods <- glmmTMB(count ~ poly(scale(year_numeric), 1), ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(yearpol.mod)) # okay
+year_poly_stats <- glmmtmb_stats(yearpol.mod, "Year 1st Degree Polynomial")
+
+yearpol2.mods <- glmmTMB(count ~ poly(scale(year_numeric), 2), ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+plot(simulateResiduals(yearpol2.mod)) # okay
+year_poly2_stats <- glmmtmb_stats(yearpol2.mod, "Year 2nd Degree Polynomial")
 ```
 
 ```{r}
 #| label: combine single-covariate models, scaled
 
-scaled_single_covariates <- rbind(null_stats, depth_stats, summer_mean_stats, winter_mean_stats, summer_max_stats, winter_min_stats, ddd_stats, winter_flags_stats, spring_flags_stats, yearly_flags_stats) # not sure what to make of this - summer_mean model is much better but there are quantile deviations in the qq plot
+scaled_single_covariates <- rbind(null_stats, depth_stats, summer_mean_stats, winter_mean_stats, summer_max_stats, winter_min_stats, ddd_stats, winter_flags_stats, spring_flags_stats, yearly_flags_stats, year_stats, year_poly_stats, year_poly2_stats) # not sure what to make of this - summer_mean model is much better but there are quantile deviations in the qq plot
+
+## doesn't seem to matter to the intercept whether I scale year or not, but that's the best single covariate
 ```
 
 ## Response curves for single-covariate models:
@@ -260,8 +289,8 @@ response_curve <- function(preds_df, xlab, title) {
   plot <- ggplot(preds_df, aes(x=covariate, y=pred_resp)) + # covariate will be on the link scale, pred_resp will be back on the response scale
     geom_line() + # mu line
     geom_ribbon(aes(ymin=lower_resp, ymax=upper_resp), alpha=0.3) + # 95% CI on response scale
-    scale_x_continuous(breaks = preds_df$covariate[nice_ids], # breaks from scaled covar
-    labels = round(preds_df$covar_descaled[nice_ids])) + # labels from descaled covar
+    #scale_x_continuous(breaks = preds_df$covariate[nice_ids], # breaks from scaled covar
+    #labels = round(preds_df$covar_descaled[nice_ids])) + # labels from descaled covar
     labs(y="Crab abundance", x=xlab, title=title) +
   theme_classic()
   return(plot)
@@ -285,31 +314,78 @@ winter_flags_plot <- response_curve(response(winter_flags.mods, data$winter_flag
 spring_flags_plot <- response_curve(response(spring_flags.mods, data$spring_flags, "spring_flags"), "Days below 3°C during spring", "4. Spring flag days")
 yearly_flags_plot <- response_curve(response(yearly_flags.mods, data$yearly_flags, "yearly_flags"), "Days below 3°C for that year starting in December", "9. Yearly flag days")
 
-(summer_mean_plot + summer_max_plot + depth_plot) / (spring_flags_plot + winter_flags_plot + winter_mean_plot) / (winter_min_plot + ddd_plot + yearly_flags_plot) + plot_annotation(title = "Single-covariate models", subtitle = "Ranked by AIC")
+year_plot <- response_curve(response(year.mod, data$year_numeric, "year_numeric"), "Year", "10. Year")
+yearpoly_plot <- response_curve(response(yearpol.mod, data$year_numeric, "year_numeric"), "Polynomial Year", "11. Polynomial Year")
+yearpoly2_plot <- response_curve(response(yearpol2.mod, data$year_numeric, "year_numeric"), "2nd Degree Polynomial Year", "12. 2nd Degree Polynomial Year")
+
+(summer_mean_plot + summer_max_plot + depth_plot) / (spring_flags_plot + winter_flags_plot + winter_mean_plot) / (winter_min_plot + ddd_plot + yearly_flags_plot) / (year_plot + yearpoly_plot + yearpoly2_plot) + plot_annotation(title = "Single-covariate models", subtitle = "Ranked by AIC") # doesn't look like polynomials of years add much ineresting shape
+```
+
+## Add additional covariates
+
+Best random-effect model with a single fixed effect is:
+
+effect \<- glmmTMB(count \~ year_numeric + (1\|year), ziformula = \~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+
+```{r}
+#| label: adding covariates
+
+# return to scaled_single_covariates stats dataframe. we only want to add covariates that aren't collinear and that beat the null model. the single-covariate models that beat the null were summer mean, summer max, and depth
+
+# test if things are collinear; if so, won't put them together
+cor(data$summer_max, data$summer_mean) # 0.94 means they are HIHGLY correlated, won't try adding summer max
+cor(data$summer_mean, data$year_numeric) # 0.20
+
+# other good models included: depth and summer_mean
+
+# so we just have to test if depth helps things out!
+effect <- glmmTMB(count ~ year_numeric, ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(effect)) # looks okay
+effect_stats <- glmmtmb_stats(effect, "Optimal model with random effect")
+
+effect_wdepth <- glmmTMB(count ~ year_numeric + scale(depth) + scale(depth), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(effect_wdepth)) # looks okay
+effect_wdepth_stats <- glmmtmb_stats(effect_wdepth, "Optimal model with random effect and additional depth covariate")
+
+effect_wsummer <- glmmTMB(count ~ year_numeric + scale(summer_mean), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(effect_wsummer)) # fails two dharma tests
+effect_wsummer_stats <- glmmtmb_stats(effect_wsummer, "Optimal model with random effect and additional summer covariate")
+
+effect_wsummerdepth <- glmmTMB(count ~ year_numeric + scale(summer_mean) + scale(depth), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(effect_wsummerdepth)) # okay
+effect_wsummerdepth_stats <- glmmtmb_stats(effect_wsummerdepth, "Optimal model with random effect and additional summer and depth covariate")
+
+View(rbind(effect_stats, effect_wdepth_stats, effect_wsummer_stats, effect_wsummerdepth_stats)) # summer and depth both improve the model individually; summer improves it more. summer and depth together don't improve it more than summer alone
 ```
 
 ## Adding random effects
 
 Best single-covariate (fixed effect or "best optimal" termed by Zuur) model is:
 
-optimal \<- glmmTMB(count \~ scale(summer_mean), ziformula = \~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+optimal \<- glmmTMB(count \~ year_numeric + scale(summer_mean), ziformula = \~ scale(pop) + scale(latitude), family = nbinom2(), data = data) - acknowledge that I'm interpreting Zuur slightly wrong here by using a model with two fixed effects but I've iterated back and forth so much that I feel confident these two covariates need to be in the model (originally it was just summer)
 
 ```{r}
 #| label: build from best fixed effect model
 
-optimal <- glmmTMB(count ~ scale(summer_mean), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+optimal <- glmmTMB(count ~ year_numeric + scale(summer_mean), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
 plot(simulateResiduals(optimal)) # quantile deviations
 optimal_stats <- glmmtmb_stats(optimal, "Optimal with ZI formula")
 
-cellfx <- glmmTMB(count ~ scale(summer_mean) + 1|cell_id, ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
-plot(simulateResiduals(cellfx)) # failed dispersion test
+cellfx <- glmmTMB(count ~ year_numeric + scale(summer_mean) + (1|cell_id), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data) # convergence failure message
+plot(simulateResiduals(cellfx)) # fine
 cellfx_stats <- glmmtmb_stats(cellfx, "Cell random intercepts")
 
-yrfx <- glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+yrfx <- glmmTMB(count ~ year_numeric + scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
 plot(simulateResiduals(yrfx)) # no problems
 yrfx_stats <- glmmtmb_stats(yrfx, "Year random intercepts")
 
-fx_stats <- rbind(optimal_stats, cellfx_stats, yrfx_stats) # year random effects are best. this is great! makes sense.
+yrfacfx <- glmmTMB(count ~ year_numeric + scale(summer_mean) + (1|year_factor), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+plot(simulateResiduals(yrfacfx)) # no problems
+yrfacfx_stats <- glmmtmb_stats(yrfacfx, "Year (as a factor) random intercepts")
+
+## combine stats from models
+
+fx_stats <- rbind(optimal_stats, cellfx_stats, yrfx_stats, yrfacfx_stats) # year random effects are best. this is great! makes sense.
 
 # yrcellfx <- glmmTMB(count ~ scale(summer_mean) + year|cell_id, ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data) # let it run 8 minutes before stopping it, at which point i got NA/NaN function evaluation errors, reject
 
@@ -350,30 +426,6 @@ fx_stats <- rbind(optimal_stats, cellfx_stats, yrfx_stats) # year random effects
 # latfx_withzi_stats <- glmmtmb_stats(latfx, "Latitude effect with population ZI formula")
 ```
 
-## Add additional covariates
+## Anddd the best model has become:
 
-Best random-effect model with a single fixed effect is:
-
-effect \<- glmmTMB(count \~ scale(summer_mean) + (1\|year), ziformula = \~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
-
-```{r}
-#| label: adding covariates
-
-# return to scaled_single_covariates stats dataframe. we only want to add covariates that aren't collinear and that beat the null model. the single-covariate models that beat the null were summer mean, summer max, and depth
-
-# test if summer max is collinear with the covariate we already have (summer mean)
-cor(data$summer_max, data$summer_mean) # 0.94 means they are HIHGLY correlated, won't try adding summer max
-
-# so we just have to test if depth helps things out!
-effect <- glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
-plot(simulateResiduals(effect)) # looks okay
-effect_stats <- glmmtmb_stats(effect, "Optimal model with random effect")
-
-effect_wdepth <- glmmTMB(count ~ scale(summer_mean) + scale(depth) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
-plot(simulateResiduals(effect_wdepth)) # looks okay
-effect_wdepth_stats <- glmmtmb_stats(effect_wdepth, "Optimal model with random effect and additional depth covariate")
-
-View(rbind(effect_stats, effect_wdepth_stats)) # BIC gets worse and AIC only gets one unit better, which isn't enough to justify adding the covariate
-```
-
-[Note to self:]{.underline} AIC of ideal model is 1302
+best \<- glmmTMB(count \~ year_numeric + scale(summer_mean) + (1\|cell_id), ziformula = \~ scale(pop) + scale(latitude), family = nbinom2(), data = data)

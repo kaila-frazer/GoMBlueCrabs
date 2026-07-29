@@ -41,7 +41,7 @@ matrices <- list()
 #   # 66sec for two months of all responses;
 #   # 2sec for two months of just sst;
 #   # 461sec for 6 years (7.5min)
-# OISST_data7 <- griddap(
+# OISST_data8 <- griddap(
 #     datasetx = "ncdc_oisst_v2_avhrr_by_time_zlev_lat_lon", # ncdcOisst21Agg_LonPM180
 #     url = "https://www.ncei.noaa.gov/erddap/", # https://coastwatch.pfeg.noaa.gov/erddap/
 #     longitude = c(288, 298), # -72,-62
@@ -53,6 +53,7 @@ matrices <- list()
 #     # time = c("2008-01-02","2015-01-01"),
 #     # time = c("2015-01-02","2022-01-01"),
 #     # time = c("2022-01-02", "2026-01-01"),
+#     time = c("2026-01-02", "2026-03-01"),
 #     fields = c("sst")
 #   ) ) # pfeg server was down when i tried to get data7 so i used the ncei server, which also has oisst (ooooh erddap)
 # saveRDS(OISST_data1, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_1989.rds')
@@ -62,22 +63,25 @@ matrices <- list()
 # saveRDS(OISST_data5, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2008_2015.rds')
 # saveRDS(OISST_data6, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2015_2022.rds')
 # saveRDS(OISST_data7, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2022_2026.rds')
+# saveRDS(OISST_data8, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_202601_202603.rds')
 # 
-# OISST_data1 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_1989.rds')
-# OISST_data2 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1989_1995.rds')
-# OISST_data3 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1995_2001.rds')
-# OISST_data4 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2001_2008.rds')
-# OISST_data5 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2008_2015.rds')
-# OISST_data6 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2015_2022.rds')
-# OISST_data7 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2022_2026.rds')
+OISST_data1 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_1989.rds')
+OISST_data2 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1989_1995.rds')
+OISST_data3 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1995_2001.rds')
+OISST_data4 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2001_2008.rds')
+OISST_data5 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2008_2015.rds')
+OISST_data6 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2015_2022.rds')
+OISST_data7 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_2022_2026.rds')
+OISST_data8 <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_202601_202603.rds')
 # 
-# oisst <- full_join(OISST_data1[["data"]], OISST_data2[["data"]]) %>%
-#   full_join(OISST_data3[["data"]]) %>%
-#   full_join(OISST_data4[["data"]]) %>%
-#   full_join(OISST_data5[["data"]]) %>%
-#   full_join(OISST_data6[["data"]]) %>%
-#   full_join(OISST_data7[["data"]])
-# saveRDS(oisst, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_2026.rds')
+oisst <- full_join(OISST_data1[["data"]], OISST_data2[["data"]]) %>%
+  full_join(OISST_data3[["data"]]) %>%
+  full_join(OISST_data4[["data"]]) %>%
+  full_join(OISST_data5[["data"]]) %>%
+  full_join(OISST_data6[["data"]]) %>%
+  full_join(OISST_data7[["data"]]) %>%
+  full_join(OISST_data8[["data"]])
+saveRDS(oisst, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_202603.rds')
 
 oisst_daily <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_2026.rds') %>% 
   mutate(date_time = ymd_hms(time), date = date(date_time), 

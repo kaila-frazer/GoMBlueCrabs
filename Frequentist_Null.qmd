@@ -278,7 +278,9 @@ plot(simulateResiduals(tmb_nb2ziprocdep)) # okay
 ## null models with depth and population interaction covariate on zero-inflated process - note that i got a convergence problem when i multipled the two but better AIC when I added
 tmb_nb1ziprocdeppop <- glmmTMB(count ~ 1,  ziformula = ~ depth+pop, family = nbinom1(), data = data)
 plot(simulateResiduals(tmb_nb1ziprocdeppop)) # okay
-tmb_nb2ziprocdeppop <- glmmTMB(count ~ 1,  ziformula = ~ depth+pop, family = nbinom2(), data = data)
+tmb_nb2ziprocdeppop <- glmmTMB(count ~ 1,  ziformula = ~ depth+pop, family = nbinom2(), data = data) # 1782
+plot(simulateResiduals(tmb_nb2ziprocdeppop)) # okay
+tmb_nb2ziprocdeppop_poly <- glmmTMB(count ~ 1,  ziformula = ~ depth+poly(pop,3), family = nbinom2(), data = data) # 1784
 plot(simulateResiduals(tmb_nb2ziprocdeppop)) # okay
 
 ## null models with depth and latitude interaction covariate on zero-inflated process
@@ -290,8 +292,16 @@ plot(simulateResiduals(tmb_nb2ziprocdeplat)) # okay
 ## null models with pop and latitude interaction covariate on zero-inflated process
 tmb_nb1ziprocpoplat <- glmmTMB(count ~ 1,  ziformula = ~ pop+latitude, family = nbinom1(), data = data)
 plot(simulateResiduals(tmb_nb1ziprocpoplat)) # okay
-tmb_nb2ziprocpoplat <- glmmTMB(count ~ 1,  ziformula = ~ pop+latitude, family = nbinom2(), data = data)
+tmb_nb2ziprocpoplat <- glmmTMB(count ~ 1,  ziformula = ~ pop+latitude, family = nbinom2(), data = data) # 1756
 plot(simulateResiduals(tmb_nb2ziprocpoplat)) # okay
+tmb_nb2ziprocpoplat_scale <- glmmTMB(count ~ 1,  ziformula = ~ scale(pop)+latitude, family = nbinom2(), data = data) # 1756
+plot(simulateResiduals(tmb_nb2ziprocpoplat_scale)) # okay
+tmb_nb2ziprocpoplat_polypop <- glmmTMB(count ~ 1,  ziformula = ~ poly(pop,3)+latitude, family = nbinom2(), data = data) # 1739, no change in aic for poly(pop,2)
+plot(simulateResiduals(tmb_nb2ziprocpoplat_polypop)) # okay
+tmb_nb2ziprocpoplat_polypop_scale <- glmmTMB(count ~ 1,  ziformula = ~ poly(scale(pop),3)+latitude, family = nbinom2(), data = data) # 1739, no change in aic for poly(pop,2)
+plot(simulateResiduals(tmb_nb2ziprocpoplat_polypop_scale)) # can't plot
+tmb_nb2ziprocpoplat_polylat <- glmmTMB(count ~ 1,  ziformula = ~ pop+poly(latitude,3), family = nbinom2(), data = data) # 1759, no change in aic for poly(pop,2)
+plot(simulateResiduals(tmb_nb2ziprocpoplat_polylat)) # okay
 
 ## null models with latitude covariate on zero-inflated process
 tmb_nb1ziproclat <- glmmTMB(count ~ 1,ziformula = ~ latitude, family = nbinom1(), data = data)
@@ -371,6 +381,7 @@ tmb_nb1ziprocdeplat_stats <- glmmtmb_stats(tmb_nb1ziprocdeplat, "NB Type I with 
 tmb_nb2ziprocdeplat_stats <- glmmtmb_stats(tmb_nb2ziprocdeplat, "NB Type II with ZI Depth + Latitude Process TMB")
 tmb_nb1ziprocpoplat_stats <- glmmtmb_stats(tmb_nb1ziprocpoplat, "NB Type I with ZI Pop + Latitude Process TMB")
 tmb_nb2ziprocpoplat_stats <- glmmtmb_stats(tmb_nb2ziprocpoplat, "NB Type II with ZI Pop + Latitude Process TMB")
+tmb_nb2ziprocpoplat_polypop_stats <- glmmtmb_stats(tmb_nb2ziprocpoplat_polypop, "NB Type II with ZI Pop Polynomial + Latitude Process TMB")
 
 AIC(tmb_nb1, tmb_nb2, tmb_p, tmb_nb1zi, tmb_nb2zi, tmb_pzi, tmb_nb1offzi, tmb_nb1ziprocpop, tmb_nb2ziprocpop, tmb_pziprocpop, tmb_nb1ziproclat, tmb_nb2ziproclat,  tmb_nb1ziproccell, tmb_nb2ziproccell, tmb_nb1ziprocdep, tmb_nb2ziprocdep, tmb_nb1ziprocdeppop, tmb_nb2ziprocdeppop, tmb_nb1ziprocdeplat, tmb_nb2ziprocdeplat, tmb_nb1ziprocpoplat, tmb_nb2ziprocpoplat) # just for fun, how's it going? ones with an explicit zi process, either without covariates or with a population parameter, are best
 ```
@@ -378,9 +389,10 @@ AIC(tmb_nb1, tmb_nb2, tmb_p, tmb_nb1zi, tmb_nb2zi, tmb_pzi, tmb_nb1offzi, tmb_nb
 ```{r}
 #| label: combine stats from different models into a big dataframe
 
-stats_full <- rbind(gam_nb_stats, gam_nboff_stats, 
-      gamlss_nbii_stats, gamlss_pig_stats, gamlss_nbiioff_stats, gamlss_pigoff_stats, gamlss_nbiiziproc_stats, gamlss_pigziproc_stats, gamlss_zanbiziproc_stats, gamlss_nbiiziprocpop_stats, gamlss_pigziprocpop_stats, gamlss_zanbiziprocpop_stats,gamlss_nbiiziproclat_stats, gamlss_pigziproclat_stats, gamlss_zanbiziproclat_stats,gamlss_nbiiziproccell_stats,
-      tmb_nb1_stats, tmb_nb2_stats, tmb_p_stats, tmb_nb1zi_stats, tmb_nb2zi_stats, tmb_pzi_stats, tmb_nb1offzi_stats, tmb_nb1ziprocpop_stats, tmb_nb2ziprocpop_stats, tmb_pziprocpop_stats, tmb_nb1ziproclat_stats, tmb_nb2ziproclat_stats, tmb_nb1ziproccell_stats, tmb_nb2ziproccell_stats, tmb_nb1ziprocdep_stats, tmb_nb2ziprocdep_stats, tmb_nb1ziprocdeppop_stats, tmb_nb2ziprocdeppop_stats, tmb_nb1ziprocdeplat_stats, tmb_nb2ziprocdeplat_stats, tmb_nb1ziprocpoplat_stats, tmb_nb2ziprocpoplat_stats)
+stats_full <- rbind(
+  # gam_nb_stats, gam_nboff_stats, 
+  #     gamlss_nbii_stats, gamlss_pig_stats, gamlss_nbiioff_stats, gamlss_pigoff_stats, gamlss_nbiiziproc_stats, gamlss_pigziproc_stats, gamlss_zanbiziproc_stats, gamlss_nbiiziprocpop_stats, gamlss_pigziprocpop_stats, gamlss_zanbiziprocpop_stats,gamlss_nbiiziproclat_stats, gamlss_pigziproclat_stats, gamlss_zanbiziproclat_stats,gamlss_nbiiziproccell_stats,
+      tmb_nb1_stats, tmb_nb2_stats, tmb_p_stats, tmb_nb1zi_stats, tmb_nb2zi_stats, tmb_pzi_stats, tmb_nb1offzi_stats, tmb_nb1ziprocpop_stats, tmb_nb2ziprocpop_stats, tmb_pziprocpop_stats, tmb_nb1ziproclat_stats, tmb_nb2ziproclat_stats, tmb_nb1ziproccell_stats, tmb_nb2ziproccell_stats, tmb_nb1ziprocdep_stats, tmb_nb2ziprocdep_stats, tmb_nb1ziprocdeppop_stats, tmb_nb2ziprocdeppop_stats, tmb_nb1ziprocdeplat_stats, tmb_nb2ziprocdeplat_stats, tmb_nb1ziprocpoplat_stats, tmb_nb2ziprocpoplat_stats,tmb_nb2ziprocpoplat_polypop_stats)
 ```
 
 #### Decision process:
@@ -406,7 +418,7 @@ stats_topmodels <- stats_full %>%
 ```
 
 ```{r}
-#| label: choosing between the competing top two models
+#| label: choosing between nb1 and nb2
 
 # two models look very, very similar in the DHARMa residuals. Type I has a slightly higher p-value (0.45) for the KS test (Type II's is 0.35), but I don't think this justifies the decision
 plot(simulateResiduals(tmb_nb1ziprocpoplat))
@@ -449,6 +461,34 @@ ggplot(boot_stats, aes(mean, var)) +
   theme_minimal()
 
 # yay! this exercise makes it clear that nb2 fits my data better; my variance increases quadratically with my mean. yes. hoorah.
+```
+
+```{r}
+#| label: choosing whether pop should be a linear or polynomial term in the ziformula
+
+## data for predicting response to pop
+covar_seq <- seq(from=min(data$pop), to=max(data$pop), length.out=100) # sequence of values for the covariate you're looking for the response to
+pred_dat <- cbind(as.data.frame(covar_seq),
+                    mean(scale(data$latitude))) # combine with means of other necessary params
+colnames(pred_dat) <- c("pop", "latitude") # assign column names
+
+## predict linear pop model
+preds <- predict(tmb_nb2ziprocpoplat, newdata = pred_dat, se.fit = T, type = "zprob") # predict abuns
+preds_df <- cbind(as.numeric(preds$fit), as.numeric(preds$se.fit), pred_dat) # make df
+colnames(preds_df) <- c("zprob", "se", "pop", "latitude") # set colnames again
+ggplot(preds_df, aes(x=pop, y=zprob)) + # covariate will be on the link scale, pred_resp will be back on the response scale
+    geom_line() + # mu line
+    labs(y="Probability of a structural zero", x="Population", title="Zero-inflation predictions") +theme_classic()
+
+## predict polynomial pop model
+preds <- predict(tmb_nb2ziprocpoplat_polypop, newdata = pred_dat, se.fit = T, type = "zprob") # predict abuns
+preds_df <- cbind(as.numeric(preds$fit), as.numeric(preds$se.fit), pred_dat) # make df
+colnames(preds_df) <- c("zprob", "se", "pop", "latitude") # set colnames again
+ggplot(preds_df, aes(x=pop, y=zprob)) + # covariate will be on the link scale, pred_resp will be back on the response scale
+    geom_line() + # mu line
+    labs(y="Probability of a structural zero", x="Population", title="Zero-inflation predictions") +theme_classic()
+
+## polynomial model doesn't change the overall trend in response, which is that there are more likely o be structural zeros at small population sizes. this makes sense!
 ```
 
 # and the null model is...

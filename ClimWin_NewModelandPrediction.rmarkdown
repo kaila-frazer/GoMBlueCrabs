@@ -1,0 +1,253 @@
+---
+title: "ClimWin_NewModelandPrediction"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Packages:
+
+```{r}
+#| label: libraries
+
+library(pacman)
+p_load(dplyr, tidyr, glmmTMB, lubridate, zoo, ggplot2)
+```
+
+```{r}
+#| label: data and previous models
+
+### data for null model
+
+matrices <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GoMBlueCrabs/ModelReadyData/modelready_matrices.rds')
+
+# extract data i want
+crab <- matrices[["crab_abun"]]
+points <- matrices[["points"]]
+summer_mean <- matrices[["summer_mean"]]
+pop <- matrices[["pop"]]
+
+# function to translate datat to long form
+make.long <- function(wide, flatornot, colname) {
+  
+  if (flatornot == "not") { # for timev varying data
+    long <- as.data.frame(wide) %>% mutate(cell_id = rownames(wide)) %>%
+      pivot_longer(-cell_id, names_to = "year", values_to = colname)}
+  
+  if (flatornot == "flat") { # for static data
+    long <- as.data.frame(wide)
+    long <- mutate(long, cell_id = rownames(long))}
+  
+  return(long)
+}
+
+# make everything long
+crab_long <- make.long(crab, "not", "count")
+points_long <- make.long(points, "flat", "")
+summer_mean_long <- make.long(summer_mean, "not", "summer_mean")
+pop_long <- make.long(pop, "flat", "")
+
+# join data
+data <- crab_long %>%
+  left_join(points_long, by = "cell_id") %>%
+  left_join(summer_mean_long, by = c("cell_id", "year")) %>%
+  left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide")
+
+### null model
+
+null <- glmmTMB(count ~ 1, ziformula = ~ pop + latitude, family = nbinom2(), data = data)
+
+### previous best model
+
+effect <- glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data)
+```
+
+## Data:
+
+```{r}
+#| label: bring in climwin analysis result
+
+## climwin data
+
+climwin <- readRDS("/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search4_20260724.rds")
+
+climwin_models <- climwin[[1]]$Dataset
+climwin_topmod <- climwin[[1]]$BestModel
+climwin_dat <- climwin[[1]]$BestModelData
+```
+
+```{r}
+#| label: gather climate data for recreating climwin model in tmb
+
+## get oisst data
+
+# oisst code from Covariate_Construction.qmd
+oisst_daily <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_2026.rds') %>% 
+  mutate(date_time = ymd_hms(time), date = date(date_time), 
+         year = year(date), month = month(date), 
+         yearmon = as.yearmon(date),
+         season = factor(case_when(month %in% c(12,1,2) ~ "Winter",
+                            month %in% c(3,4,5) ~ "Spring",
+                            month %in% c(6,7,8) ~ "Summer",
+                            month %in% c(9,10,11) ~ "Fall"))) %>%
+  select(longitude, latitude, date_time, date, year, yearmon, month, season, sst) %>%
+  mutate(longitude = case_when(as.numeric(longitude) < 0 ~ longitude,
+                               as.numeric(longitude) > 0 ~ as.numeric(longitude) - 360))
+
+oisst_daily_nona <- na.omit(oisst_daily) # now the monthly data shouldn't have NAs
+
+oisst_monthly_nona <- oisst_daily_nona %>%
+  group_by(longitude, latitude, yearmon, year, season, month) %>%
+  summarize(monthly_sst = mean(sst), monthly_min = min(sst), monthly_max = max(sst)) %>%
+  mutate(longitude = case_when(as.numeric(longitude) < 0 ~ longitude,
+                               as.numeric(longitude) > 0 ~ as.numeric(longitude) - 360))
+
+oisst_month_points <- right_join(oisst_monthly_nona, 
+                                   points_long, by = c("longitude", "latitude")) %>% 
+  mutate(date = as.Date(yearmon)) %>% ungroup() %>% select(date, monthly_sst, cell_id) %>%
+  filter(year(date) != 2026)
+
+climdat <- oisst_month_points
+
+## create climdat with climwins
+
+# 48 to 46 is the best for 4 years ago, 12 to 11 is the best for 1 year ago, 36 to 34 is the best for 3 years ago, 25 to 22 is the best for 2 years ago
+
+climdat <- climdat %>% mutate(year = year(date), month = month(date)) %>%
+  mutate(fouryearwin = NA, threeyearwin = NA, twoyearwin = NA, oneyearwin = NA) 
+# establish columns for analysis
+
+for(i in 1:nrow(climdat)) {
+  if(climdat$year[i] >= 1986) { # 1986 points would use July to September of 1982, so that's our first year of available window analysis; can't calculate a window for years before 1987
+    cellfilter <- filter(climdat, cell_id == climdat$cell_id[i])
+    climdat$fouryearwin[i] <- filter(cellfilter, year == climdat$year[i] - 4,
+                                     month %in% c("7", "8", "9")) %>%
+      summarize(val = mean(monthly_sst))
+    climdat$threeyearwin[i] <- filter(cellfilter, year == climdat$year[i] - 3,
+                                     month %in% c("7", "8", "9")) %>%
+      summarize(val = mean(monthly_sst))
+    climdat$twoyearwin[i] <- filter(cellfilter, year == climdat$year[i] - 2,
+                                     month %in% c("6", "7", "8", "9")) %>%
+      summarize(val = mean(monthly_sst))
+    climdat$oneyearwin[i] <- filter(cellfilter, year == climdat$year[i] - 1,
+                                     month %in% c("6", "7")) %>%
+      summarize(val = mean(monthly_sst))
+    print(i)
+  }
+} 
+```
+
+```{r}
+#| label: bring in biodat used to fit the climwin
+
+crab_month <- readRDS("ModelReadyData/crab[i,m,y].rds")
+crab_month_long <- as.data.frame(crab_month) %>% mutate(lonlat = rownames(crab_month)) %>%
+      pivot_longer(-lonlat, names_to = "yearmon", values_to = "abun") %>%
+      separate(lonlat, into = c("longitude", "latitude"), sep="_") %>% 
+  mutate(longitude = as.double(longitude), latitude = as.double(latitude)) %>%
+  left_join(points_long) %>%
+  mutate(date = as.Date(as.yearmon(yearmon, format="%Y.%b"))) %>% select(date, abun, cell_id) #%>%
+  # filter(date %in% unique(oisst_month_points$date)[49:533]) # , year(date) != 2026
+
+biodat <- crab_month_long
+```
+
+```{r}
+#| label: combine climdat and biodat
+
+## clean things up a bit and combine with biodat
+
+climwindat <- left_join(climdat, biodat, by = c("cell_id", "date")) %>%
+  na.omit() %>% # remove those first four years of data
+  mutate(fouryearwin = as.numeric(fouryearwin), # these were outputted as lists so change
+         threeyearwin = as.numeric(threeyearwin),
+         twoyearwin = as.numeric(twoyearwin),
+         oneyearwin = as.numeric(oneyearwin)) %>%
+  group_by(cell_id, year) %>% summarize(abun = sum(abun), # get yearly values rather than mo
+                                        fouryearwin = mean(fouryearwin),
+                                        threeyearwin = mean(threeyearwin),
+                                        twoyearwin = mean(twoyearwin),
+                                        oneyearwin = mean(oneyearwin)) %>%
+  left_join(pop_long, by = "cell_id") %>% rename("pop" = "wide") %>%
+  left_join(points_long, by = "cell_id")
+```
+
+## Full data models
+
+```{r}
+#| label: try different reconstructions of the climwin model
+
+## this is the winner, as identified by climwin (yay!)
+climwin4yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1274
+
+climwin3yr_tmb <- glmmTMB(abun ~ scale(threeyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1281
+
+climwin2yr_tmb <- glmmTMB(abun ~ scale(twoyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1291
+
+climwin1yr_tmb <- glmmTMB(abun ~ scale(oneyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1304
+
+## additions
+
+climwin4and3yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) + scale(threeyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1276
+
+climwin4and2yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) + scale(twoyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1272
+
+climwin4and1yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) + scale(oneyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1269
+
+## interactions
+
+climwin43yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) * scale(threeyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1255
+
+climwin42yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) * scale(twoyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1271
+
+climwin41yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) * scale(oneyearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1268
+```
+
+```{r}
+#| label: compare aic
+
+AIC(climwin4yr_tmb) # 1274
+AIC(climwin43yr_tmb) # 1255 HOWEVER the interaction is negative which makes less biological sense to me so i'm gonna roll with the 4yr model for the poster as i chew more on this
+AIC(null) # 1756
+AIC(effect) # 1302
+```
+
+```{r}
+#| label: save model RDS files for access in EFI_Figs.qmd
+
+saveRDS(climwin4yr_tmb, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/climwin4yr_tmb.rds')
+saveRDS(null, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/null.rds')
+saveRDS(effect, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/0yrsummer_tmb.rds')
+saveRDS(climwindat, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelFiles/climwindat_recreation.rds')
+```
+
+## Model with testing data
+
+```{r}
+#| label: separate testing and training data
+
+# decide where to split testing from training
+ggplot(climwindat, aes(x = year, y = abun)) + geom_point() # sharp increase starts around 2020
+```
+
+```{r}
+#| label: re-fit model just on training data
+
+climwin4yr_tmb <- glmmTMB(abun ~ scale(fouryearwin) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = climwindat) # AIC 1274 with full dataset
+```
+
+```{r}
+#| label: predict on testing data
+
+
+
+```
+
+```{r}
+#| label: plot
+
+
+
+```
+
