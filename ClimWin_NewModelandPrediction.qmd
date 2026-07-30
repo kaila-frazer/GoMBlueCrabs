@@ -6,13 +6,17 @@ editor_options:
   chunk_output_type: console
 ---
 
+#### AI disclosure
+
+Claude chat helping me make simple ggplot code: <https://claude.ai/share/dfeabd60-5816-4fc8-b375-edba04c53194>
+
 ## Packages:
 
 ```{r}
 #| label: libraries
 
 library(pacman)
-p_load(dplyr, tidyr, glmmTMB, lubridate, zoo, ggplot2)
+p_load(dplyr, tidyr, glmmTMB, lubridate, zoo, ggplot2, terra, tidyterra)
 ```
 
 ```{r}
@@ -180,7 +184,7 @@ climwindat <- left_join(climdat, biodat, by = c("cell_id", "date")) %>%
 
 saveRDS(climwindat, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelReadyData/climwindat.rds')
 
-climwindat <- readRDS('/Users/kailafrazer/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelReadyData/climwindat.rds')
+# climwindat <- readRDS('/Users/kailafrazer/CloudStorage/OneDrive-USNH/Crab/GOMBlueCrabs/ModelReadyData/climwindat.rds')
 ```
 
 ## Full data models
@@ -240,30 +244,116 @@ saveRDS(climwindat, '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/
 # try it with just recent years of data
 # try <- filter(climwindat, abun > 0); min(try$year) # found 2006 to be the first year of data in this post-OISST start set with abundance
 climwindat_recent <- climwindat %>% filter(year >= 2006) %>%
-    mutate(year_factor = factor(year), year_numeric = as.numeric(year))
+    mutate(year_factor = factor(year), year_numeric = as.numeric(year)) %>%
+  mutate(test_train = case_when(year >= 2021 ~ "Project", year < 2021 ~ "Predict"))
 
 # decide where to split testing from training
 # ggplot(climwindat, aes(x = year, y = abun)) + geom_point() # sharp increase starts around 2020
-train <- climwindat_recent %>% filter(year < 2025)
+train <- climwindat_recent %>% filter(year < 2021)
 
 # train model
-climwin4yr_tmb_train <- glmmTMB(abun ~ scale(fouryearwin) + year_numeric + (1 | year_factor), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = train) # adjusted to include year_numeric and (1 | year_factor) instead of just (1 | year) because the non-trended random effect was resulting in predictions near zero for future years. process made me realize i need to rethink these parts of the model
+climwin4yr_tmb_train <- glmmTMB(abun ~ scale(fouryearwin) + scale(year_numeric) + (1|cell_id), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = train) # adjusted to include year_numeric and instead of  because the non-trended random effect was resulting in predictions near zero for future years. process made me realize i need to rethink these parts of the model
 
 # predict
-pred <- predict(climwin4yr_tmb_train, newdata = na.omit(climwindat_recent), se.fit = T, type = "link", 
-                re.form = NULL, allow.new.levels = T) # allow extrapolation of year
+pred <- predict(climwin4yr_tmb_train, newdata = na.omit(climwindat_recent), se.fit = T, type = "link") # allow extrapolation of year
 
 preds_df <- cbind(as.numeric(pred$fit), as.numeric(pred$se.fit), na.omit(climwindat_recent)) %>%
   rename("pred_link" = "...1", "se_link" = "...2") %>%
   mutate(pred_resp = exp(pred_link),
            lower_resp = exp(pred_link - 1.96 * se_link), 
-           upper_resp = exp(pred_link + 1.96 * se_link)) # %>% # find upper/lower
+           upper_resp = exp(pred_link + 1.96 * se_link)) #%>% filter(year < 2026) #%>% # find upper/lower
     # mutate(covar_descaled = covar_seq * attr(scale(covar_vect), 'scaled:scale') +
     #                            attr(scale(covar_vect), 'scaled:center'))
 
-# plot
+preds_df_means <- preds_df %>% group_by(year) %>% 
+  summarize(obs_mean = mean(abun), obs_upper = max(abun), obs_lower = min(abun),
+            pred_mean = mean(pred_resp), pred_lower = min(pred_resp), pred_upper = max(pred_resp),
+            lower_resp = mean(lower_resp), upper_resp = mean(upper_resp)) %>%
+  mutate(test_train = case_when(year >= 2021 ~ "Project", year < 2021 ~ "Predict"))
+
+# plot all points
 ggplot(preds_df, aes(x = year)) + geom_jitter(aes(y = abun, color = "Actual")) +
-  geom_jitter(aes(y = pred_resp, color = "Prediction"))
+  geom_jitter(aes(y = pred_resp, color = test_train), alpha = 0.5) + theme_classic() +
+  scale_color_viridis_d()
+
+# plot ranges and means
+ggplot(preds_df_means, aes(x = year)) + 
+  geom_ribbon(aes(ymin = obs_lower, ymax = obs_upper, fill = "Actual"), alpha = 0.3) +
+  geom_line(aes(y = obs_mean, color = "Actual")) +
+    geom_ribbon(aes(ymin = lower_resp, ymax = upper_resp, fill = test_train), alpha = 0.3) +
+  geom_line(aes(y = pred_mean, color = test_train), alpha = 0.5) + theme_classic() +
+  scale_color_viridis_d() + scale_fill_viridis_d()
+  # so this isn't the uncertainty it's the range of values observed fr
 
 # notes: on first attempt, the years in the testing data get functionally zero abundance (I think because the random effect was really controlling the abundance). When I remove the random effect, I get lower level abundance across the set
+
+### claude update below, commented and updated by me
+
+# smooth the bounds of the intervals but less so than geom_smooth would
+preds_df_means_smooth <- preds_df_means %>%
+  arrange(year) %>%
+  mutate(
+    resp_lower_smooth = predict(loess(lower_resp ~ year, data = ., span = 0.6)),
+    resp_upper_smooth = predict(loess(upper_resp ~ year, data = ., span = 0.6)),
+    obs_lower_smooth = predict(loess(obs_lower ~ year, data = ., span = 0.6)),
+    obs_upper_smooth = predict(loess(obs_upper ~ year, data = ., span = 0.6))
+  )
+
+# fill missing test_train values
+boundary_row <- preds_df_means_smooth %>%
+  filter(year == max(year[test_train == "Predict"])) %>%
+  mutate(test_train = "Project")
+
+# data for plotting
+plot_data <- bind_rows(preds_df_means_smooth, boundary_row) %>%
+  arrange(year, test_train)
+
+# updated plot, originally by me revised by Claude to have these smoother bounds
+gg <- ggplot(plot_data, aes(x = year)) +
+  geom_ribbon(aes(ymin = obs_lower_smooth, ymax = obs_upper_smooth, fill = "Observed", color = "Observed"), alpha = 0.2, lwd = 0.1) +
+  geom_line(aes(y = obs_mean, color = "Observed")) +
+  geom_ribbon(aes(ymin = resp_lower_smooth, ymax = resp_upper_smooth,
+                   fill = test_train, group = test_train, color = test_train), alpha = 0.2, lwd = 0.1) +
+  geom_line(aes(y = pred_mean, color = test_train, group = test_train),
+           linetype = "dashed") +
+  theme_classic() +
+  scale_color_viridis_d("", option = "E", direction = -1) +
+  scale_fill_viridis_d("", option = "E", direction = -1) + 
+  labs(x = "Year", y = "Mean crab abundance")
+
+ggsave(plot=gg, height = 2, width = 4, unit = "in", "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Figs/obsvpredproj.png")
+```
+
+## Figs for EFI
+
+```{r}
+#| label: new oisst fig with lag
+
+# create relevant grid
+grid <- readRDS("ModelReadyData/grid.rds")
+grid_poly <- readRDS("ModelReadyData/grid_poly.rds")
+
+# prep for plot
+rast <- grid
+cells <- cellFromXY(grid, as.matrix(matrices[["points"]]))
+values(rast) <- NA
+covar <- climdat %>% group_by(cell_id, year) %>%
+  summarize(fouryearwin = mean(as.numeric(fouryearwin))) %>% filter(year == 2023) %>%
+  arrange(as.numeric(cell_id))
+rast[cells] <- covar$fouryearwin
+
+gg <- ggplot() + 
+    geom_spatraster(data = rast) +
+    geom_spatvector(data = land_outline, aes(color = "Coastline"), 
+                  fill = "lightgray", alpha = 0.4, lwd = 0.1) +
+    geom_spatvector(data = grid_poly, aes(color = "Study area\n> -46m"), 
+                    fill = NA, lwd = 0.3, linetype = 5) + 
+    scale_fill_viridis_c("2019 summer\nmean temp (°C)",
+                       na.value = "white") +
+    scale_color_viridis_d("Outlines", option = "H") +
+    labs(x = "Latitude", y = "Longitude", title = "B. Mean 2019 summer temps (°C)") +
+    coord_sf() +
+    theme_classic()
+
+ggsave(plot=gg, width = 5, height = 4, unit = "in", '/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Figs/LagSummerTemp.png')
 ```

@@ -19,6 +19,8 @@ van de Pol et al. 2016. For a little more climwin background
 
 Claude chat that first suggested climwin as a package to explore, as well as some introductory code for using it: <https://claude.ai/share/d8438437-ed0e-4b85-9ab0-8306300d8731>
 
+Claude chat for debugging search4update, tbh it wasn't very helpful and tasks were extremely menial: <https://claude.ai/share/943806c6-af4c-4462-b5c5-4cc032ed38eb>
+
 ## Packages & Data
 
 ```{r}
@@ -69,7 +71,7 @@ data <- crab_long %>%
 
 ## oisst code from Covariate_Construction.qmd
 
-oisst_daily <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_2026.rds') %>% 
+oisst_daily <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/Data/oisst_1982_202603.rds') %>% 
   mutate(date_time = ymd_hms(time), date = date(date_time), 
          year = year(date), month = month(date), 
          yearmon = as.yearmon(date),
@@ -77,7 +79,7 @@ oisst_daily <- readRDS('/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Cr
                             month %in% c(3,4,5) ~ "Spring",
                             month %in% c(6,7,8) ~ "Summer",
                             month %in% c(9,10,11) ~ "Fall"))) %>%
-  select(longitude, latitude, date_time, date, year, yearmon, month, season, sst) %>%
+  dplyr::select(longitude, latitude, date_time, date, year, yearmon, month, season, sst) %>%
   mutate(longitude = case_when(as.numeric(longitude) < 0 ~ longitude,
                                as.numeric(longitude) > 0 ~ as.numeric(longitude) - 360))
 
@@ -91,10 +93,10 @@ oisst_monthly_nona <- oisst_daily_nona %>%
 
 oisst_month_points <- right_join(oisst_monthly_nona, 
                                    points_long, by = c("longitude", "latitude")) %>% 
-  mutate(date = as.Date(yearmon)) %>% ungroup() %>% select(date, monthly_sst, cell_id) %>%
-  filter(year(date) != 2026)
+  mutate(date = as.Date(yearmon)) %>% ungroup() %>% dplyr::select(date, monthly_sst, cell_id) # %>%
+  # filter(year(date) != 2026)
 
-climdat <- oisst_month_points
+climdat <- oisst_month_points %>% filter(year(date) < 2026)
 ```
 
 ```{r}
@@ -106,10 +108,17 @@ crab_month_long <- as.data.frame(crab_month) %>% mutate(lonlat = rownames(crab_m
       separate(lonlat, into = c("longitude", "latitude"), sep="_") %>% 
   mutate(longitude = as.double(longitude), latitude = as.double(latitude)) %>%
   left_join(points_long) %>%
-  mutate(date = as.Date(as.yearmon(yearmon, format="%Y.%b"))) %>% select(date, abun, cell_id) %>%
-  filter(date %in% unique(oisst_month_points$date)[49:533], year(date) != 2026)
+  mutate(date = as.Date(as.yearmon(yearmon, format="%Y.%b"))) %>% dplyr::select(date, abun, cell_id)
 
-biodat <- crab_month_long
+# make sure there's enough run-up time for oisst lag
+min_date <- min(climdat$date) + years(4)
+biodat <- crab_month_long %>% filter(date <= max_date, date >= min_date)
+
+# make sure we're only looking at the window of presences and not long tails of absences at the beginning or end
+only_abuns <- filter(biodat, abun > 0)
+min_biodate <- min(only_abuns$date)
+max_biodate <- max(only_abuns$date)
+biodat <- biodat %>% filter(date <= max_biodate, date >= min_biodate, year(date) < 2026) %>% mutate(year = year(date), year_numeric = as.numeric(year), year_factor = factor(year), cell_id = as.numeric(cell_id))
 ```
 
 ## Null model
@@ -118,11 +127,17 @@ biodat <- crab_month_long
 #| label: reconstructing model from Frequentist_Covariate.qmd
 
 # climwin can only take lm, glm, lmer, glmer
-# best model was glmmTMB(count ~ scale(summer_mean) + (1|year), ziformula = ~ scale(pop) + scale(latitude), family = nbinom2(), data = data) with an AIC of 1302; let's see how close we can get to that
 
-moddat <- biodat %>% mutate(year = year(date))
+moddat <- biodat 
 
-basemod <- glmer.nb(abun ~ (1|year), data=moddat) # AIC of 1722 when run on the yearly aggregated data (data), AIC of 4187 when run on the monthly data (moddat)
+# basemod <- glm.nb(abun ~ year_numeric + (1|cell_id), data=moddat) # convergence errors in glmer.nb and cell_id doesn't help for glm.nb
+basemod.revision <- glm.nb(abun ~ year_numeric, data=moddat) # 4119 and resulted in some funky climwin analysis
+basemod <- glmer.nb(abun ~ (1|year), data=moddat) # 4105
+# basemod <- glmer.nb(abun ~ (1|year_numeric), data=moddat) # 4105
+
+# i think it makes sense to keep basemod over basemod.revision because basemod.revision has a higher AIC given the package frameworks available to work with climwin. basemod.revision also results in less seasonal patterning of the climwin but similar general takeaways, making it less clear to interpret but leading to similar things
+
+# the main thing to learn from basemod.revision is that it does favor more recent years more highly in change in AIC, which basemod does less, so i think it's good to keep in mind that we shouldn't be searching over a super broad window (as in search6)
 
 # ## or if climwin can actually take tmb, then...
 # 
@@ -225,9 +240,12 @@ plotwin(dataset = out3) # not quite sure what to make of these
 ```
 
 ```{r}
-#| label: search4 - now with absolute values from jul 1
+#| label: search4update - now with absolute values from jul 1
 
-search4 <- slidingwin(xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
+# update means the model has been updated from the one i thought was best (just the random effect) to the one i realized i could do and was better (just year covariate)
+
+# when i first ran this with all the new data from 2026, i was hitting a lot of window errors, i think because july 2026 wasn't available, and that's the refday
+search4update <- slidingwin(xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
                       cdate = climdat$date,
                       bdate = biodat$date,
                       baseline = basemod,
@@ -239,23 +257,23 @@ search4 <- slidingwin(xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
                       func = "lin", # c("lin", "quad")
                       spatial = list(biodat$cell_id, climdat$cell_id))
 
-saveRDS(search4, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search4_20260724.rds")
+saveRDS(search4update, "/Users/kailafrazer/Library/CloudStorage/OneDrive-USNH/Crab/slidingwin_search4update_20260724.rds")
 
-View(search4[[1]]$Dataset)
-search4[[1]]$BestModel
-search4[[1]]$BestModel@optinfo$conv$lme4$messages # no convergence messages! yay
+View(search4update[[1]]$Dataset)
+search4update[[1]]$BestModel
+search4update[[1]]$BestModel@optinfo$conv$lme4$messages # no convergence messages! yay
 
-out4 <- search4[[1]]$Dataset
+out4update <- search4update[[1]]$Dataset
 
 # plots from climwin vignette
-plotdelta(dataset = out4) # WOW there is seasonality
-plotweights(dataset = out4) # very small number of models in the 95% confidence set
-plotbetas(dataset = out4) # clear increase in effect a year out
-plotwin(dataset = out4) # not quite sure what to make of these
+plotdelta(dataset = out4update) # WOW there is seasonality - okay, so the plot with just the year covariate is way less easy to distinguish patterns from. i think this is because the year covariate is already soaking up so much of the variation
+plotweights(dataset = out4update) # very small number of models in the 95% confidence set
+plotbetas(dataset = out4update) # clear increase in effect a year out
+plotwin(dataset = out4update) # not quite sure what to make of these
 ```
 
 ```{r}
-#| label: search5 - now looking at mean effects instead of min effects
+#| label: search5 - now looking at min effects instead of mean effects
 
 search5 <- slidingwin(xvar = list(sst = as.numeric(scale(climdat$monthly_sst))),
                       cdate = climdat$date,

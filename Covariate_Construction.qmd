@@ -134,6 +134,8 @@ oisstmean_r <- lapply(names(oisst_split), \(i) { # iterate through list of yearm
 oisst_grid <- oisstmean_r # create a new object
 values(oisst_grid) <- 0.0001 # set all vals to near zero. we don't want exactly zero because then we can't get proportional abundance (crab/people) for offshore areas
 oisst_grid <- mask(oisst_grid, oisstmean_r) # set land to na
+
+saveRDS(oisst_grid, "ModelReadyData/oisst_grid.rds")
 ```
 
 ## Bathymetry
@@ -159,6 +161,8 @@ land_outline <- ncvar_get(bath, "elevation") %>%
 ext(land_outline) <- c(xmin=min(lon), xmax=max(lon), ymin=min(lat), ymax=max(lat))
 crs(land_outline) <- "EPSG:4326"
 land_outline <- as.polygons(land_outline)
+
+saveRDS(land_outline, "ModelReadyData/land_outline.rds")
 ```
 
 ```{r}
@@ -174,6 +178,9 @@ grid <- mask(grid, bath_rast) # set land to na
 
 grid_poly <- as.polygons(grid) # to outline the study area in later plots
 crs(grid_poly) <- "WGS84"
+
+saveRDS(grid, "ModelReadyData/grid.rds")
+saveRDS(grid_poly, "ModelReadyData/grid_poly.rds")
 ```
 
 ```{r}
